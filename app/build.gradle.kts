@@ -25,11 +25,17 @@ android {
 
   signingConfigs {
     create("release") {
-      val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
-      storeFile = file(keystorePath)
-      storePassword = System.getenv("STORE_PASSWORD")
-      keyAlias = "upload"
-      keyPassword = System.getenv("KEY_PASSWORD")
+      // Only configure when a real keystore is provided (CI secrets or local env).
+      // Empty/missing env must not crash configuration — release falls back to unsigned.
+      val keystorePath = System.getenv("KEYSTORE_PATH").orEmpty().trim()
+      val storePass = System.getenv("STORE_PASSWORD").orEmpty().trim()
+      val keyPass = System.getenv("KEY_PASSWORD").orEmpty().trim()
+      if (keystorePath.isNotEmpty() && storePass.isNotEmpty() && keyPass.isNotEmpty()) {
+        storeFile = file(keystorePath)
+        storePassword = storePass
+        keyAlias = "upload"
+        keyPassword = keyPass
+      }
     }
     create("debugConfig") {
       storeFile = file("${rootDir}/debug.keystore")

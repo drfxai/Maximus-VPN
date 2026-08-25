@@ -93,10 +93,11 @@ jobs:
         shell: pwsh
         working-directory: desktop
         run: |
-          $tag = "${env:GITHUB_REF_NAME}"
-          if ("${env:GITHUB_EVENT_NAME}" -eq "workflow_dispatch") { $tag = "${{ inputs.tag }}" }
+          $tag = if ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch") { "${{ inputs.tag }}" } else { $env:GITHUB_REF_NAME }
           $version = $tag -replace '^v', ''
-          gradle packageMsi packageExe -PappVersion=$version --no-daemon
+          if (-not ($version -match '^[0-9][A-Za-z0-9.+~-]*$')) { $version = "1.0.0" }
+          Write-Host "Building with appVersion=$version"
+          gradle packageMsi packageExe "-PappVersion=$version" --no-daemon
       - name: Collect Windows artifacts
         shell: pwsh
         run: |
@@ -137,6 +138,8 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then TAG="${{ inputs.tag }}"; fi
           VERSION="${TAG#v}"
+          if ! [[ "$VERSION" =~ ^[0-9][A-Za-z0-9.+~-]*$ ]]; then VERSION="1.0.0"; fi
+          echo "Building with appVersion=$VERSION"
           gradle packageDeb -PappVersion="$VERSION" --no-daemon
       - name: Collect Ubuntu artifacts
         shell: bash
