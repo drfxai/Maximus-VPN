@@ -8,16 +8,15 @@ plugins {
 }
 
 group = "com.drfxai"
-def appVersion = (providers.gradleProperty("appVersion").orElse("1.0.0").get())
-    .replaceFirst("^v", "")
-// Debian requires: starts with digit, only alphanumerics . + - ~
-if (!(appVersion =~ /^[0-9][A-Za-z0-9.+~-]*$/)) {
-    logger.warn("Invalid appVersion '$appVersion' for Deb — falling back to 1.0.0")
-    ext.set("validAppVersion", "1.0.0")
+// Debian package versions must start with a digit and contain only alphanumerics . + - ~
+val appVersion = providers.gradleProperty("appVersion")
+    .orElse("1.0.0").get().trim().removePrefix("v")
+version = if (Regex("^[0-9][A-Za-z0-9.+~-]*$").matches(appVersion)) {
+    appVersion
 } else {
-    ext.set("validAppVersion", appVersion)
+    logger.warn("Invalid appVersion '$appVersion' for Deb — falling back to 1.0.0")
+    "1.0.0"
 }
-version = ext.get("validAppVersion")
 
 
 dependencies {
