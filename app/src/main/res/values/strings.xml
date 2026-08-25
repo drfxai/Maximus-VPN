@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Maximus</string>
+    <string name="app_name">Maximus VPN</string>
     <string name="developer_name">DrFXAi</string>
     <string name="vpn_service_label">Maximus VLESS Engine</string>
     <string name="notification_channel_name">Maximus VPN Status</string>

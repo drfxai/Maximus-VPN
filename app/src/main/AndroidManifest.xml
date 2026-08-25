@@ -10,7 +10,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
-        android:name=".RayApplication"
+        android:name=".MaximusApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -32,7 +32,7 @@
         </activity>
 
         <service
-            android:name=".vpn.RayVpnService"
+            android:name=".vpn.MaximusVpnService"
             android:exported="false"
             android:label="@string/vpn_service_label"
             android:permission="android.permission.BIND_VPN_SERVICE"
