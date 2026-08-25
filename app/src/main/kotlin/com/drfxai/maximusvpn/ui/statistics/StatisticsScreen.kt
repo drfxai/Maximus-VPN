@@ -144,8 +144,8 @@ fun StatisticsScreen(
                     title = "TUNNEL IP",
                     value = state.vpnIp ?: "—",
                     sub = "virtual interface",
-                    icon = { Icon(Icons.Filled.Public, null, tint = colors.secondary) },
-                    accent = colors.secondary
+                    icon = { Icon(Icons.Filled.Public, null, tint = colors.primaryLight) },
+                    accent = colors.primaryLight
                 )
             }
         }

@@ -10,13 +10,10 @@ plugins {
 group = "com.drfxai"
 version = providers.gradleProperty("appVersion").orElse("1.0.0").get()
 
-repositories {
-    google()
-    mavenCentral()
-}
 
 dependencies {
     implementation(compose.desktop.currentOs)
+    implementation(compose.material3)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
 }
@@ -36,5 +33,5 @@ compose.desktop {
 }
 
 kotlin {
-    jvmToolchain(17)
+    jvmToolchain(21)
 }

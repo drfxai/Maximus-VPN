@@ -37,6 +37,16 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "code=${VERSION//./}" >> "$GITHUB_OUTPUT"
+      - name: Download Xray-core Android arm64-v8a
+        shell: bash
+        run: |
+          mkdir -p app/src/main/jniLibs/arm64-v8a
+          curl -L --fail --retry 3 -o xray-android.zip "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-android-arm64-v8a.zip"
+          unzip -o xray-android.zip -d xray-android-unpacked
+          XRAY_BIN=$(find xray-android-unpacked -type f -name xray | head -n 1)
+          test -n "$XRAY_BIN"
+          cp "$XRAY_BIN" app/src/main/jniLibs/arm64-v8a/libxray.so
+
       - name: Build Android release artifacts
         env:
           KEYSTORE_PATH: ${{ secrets.KEYSTORE_PATH }}
