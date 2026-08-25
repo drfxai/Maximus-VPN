@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.net.URI
 import java.net.URLDecoder
 import java.net.URLEncoder
@@ -17,6 +19,7 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import java.util.concurrent.TimeUnit
 
 /** Connection lifecycle shared by the desktop UI. */
 enum class DesktopConnectionStatus {
@@ -44,22 +47,52 @@ data class TrafficSnapshot(
 /**
  * Real Xray-core engine for Windows x64 / Linux x64.
  *
- * Spawns the bundled Xray-core executable in TUN mode with a generated config.
- * Captures stdout into a bounded log buffer and parses Xray's traffic statistics
- * from its debug output when available. Fail-closed: if Xray exits unexpectedly,
- * state moves to FAILED and the TUN dies with the process (no fallback path exists).
+ * Connect sequence (each step logged, any failure => FAILED):
+ *   1. validate profile + runtime (elevated on Windows)
+ *   2. extract bundled xray binary (+ wintun.dll on Windows) and verify PE arch
+ *   3. write config.json, validate it via `xray run -test`
+ *   4. start Xray, capture stderr separately, fail fast on startup errors
+ *   5. wait until the TUN adapter actually exists ("MaximusVPN" on Windows)
+ *   6. probe the SOCKS/HTTP inbound Xray exposes locally to prove routing readiness
+ *   7. only then report CONNECTED
+ *
+ * Fail-closed everywhere: if Xray dies mid-session the state moves to FAILED and
+ * the TUN adapter disappears with the process — no direct fallback path exists.
  */
 class XrayDesktopEngine {
 
     companion object {
         const val XRAY_VERSION_PINNED = "Xray-core 26.7.28"
+        const val WINTUN_VERSION_PINNED = "Wintun 0.14.1"
         private const val MAX_LOG_LINES = 1000
+
+        /** Seconds to wait for the TUN adapter + local inbound to come up. */
+        private const val TUN_WAIT_SECONDS = 20
+
+        /** Local SOCKS inbound Xray listens on for self-traffic and our probes. */
+        const val LOCAL_PROBE_PORT = 10808
+
+        /** Stale Xray processes from previous runs (matched by command line). */
+        private const val STALE_PROCESS_MARKER = "maximus-vpn"
+
         val APP_DIR: Path = Path.of(System.getProperty("user.home"), ".maximus-vpn")
+        val BIN_DIR: Path = APP_DIR.resolve("bin")
     }
 
-    private var process: Process? = null
+    @Volatile private var process: Process? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     @Volatile private var logPumpActive = false
+    @Volatile private var lastStartupError: String? = null
+    private val stderrBuffer = object {
+        val lines = ArrayDeque<String>()
+        fun add(line: String) {
+            synchronized(lines) {
+                lines.addLast(line.take(500))
+                if (lines.size > 50) lines.removeFirst()
+            }
+        }
+        fun snapshot(): List<String> = synchronized(lines) { lines.toList() }
+    }
 
     private val _state = MutableStateFlow(DesktopConnectionState())
     val state: StateFlow<DesktopConnectionState> = _state.asStateFlow()
@@ -70,54 +103,95 @@ class XrayDesktopEngine {
     private val _traffic = MutableStateFlow(TrafficSnapshot())
     val traffic: StateFlow<TrafficSnapshot> = _traffic.asStateFlow()
 
-    init { Files.createDirectories(APP_DIR) }
+    init { Files.createDirectories(APP_DIR); Files.createDirectories(BIN_DIR) }
 
     fun connect(profile: ServerProfile) {
-        stopInternal(clearState = false)
+        stopInternal()
         _state.value = DesktopConnectionState(
             status = DesktopConnectionStatus.CONNECTING,
             activeProfile = profile
         )
         try {
+            // ---- 1. profile + runtime validation ----------------------------------
+            log("[START] Validating connection request")
             require(profile.isValid) { profile.validationError ?: "Invalid server profile" }
 
+            if (isWindows()) {
+                log("[START] Validating Windows runtime")
+                if (!isElevatedWindows()) {
+                    throw IllegalStateException(
+                        "Administrator privileges are required to create the TUN adapter. " +
+                        "Right-click Maximus VPN and choose \"Run as administrator\", or reinstall " +
+                        "via the MSI which configures elevation automatically."
+                    )
+                }
+            }
+
+            // ---- 2. extract runtime files -----------------------------------------
             val binary = ensureXrayBinary()
+            log("[OK] xray${if (isWindows()) ".exe" else ""} found (${binary.fileName})")
+
+            val wintunPath = ensureWintunRuntime()
+            if (isWindows()) log("[OK] wintun.dll found (${wintunPath.fileName})")
+
+            ensureGeoData()
+
+            // ---- 3. config generation + validation ---------------------------------
+            log("[START] Validating Xray configuration")
             val config = APP_DIR.resolve("config.json")
             Files.writeString(config, XrayConfigBuilder.buildTunConfig(profile))
+            validateConfig(binary, config)
+            log("[OK] Xray configuration valid")
 
-            appendLog("INFO", "Starting $XRAY_VERSION_PINNED for '${profile.name}' (${profile.address}:${profile.port})")
+            // ---- 4. process start ---------------------------------------------------
+            log("[START] Starting Xray")
+            lastStartupError = null
+            stderrBuffer.snapshot().forEach { /* clear */ }
+            synchronized(stderrBuffer.lines) { stderrBuffer.lines.clear() }
 
-            val pb = ProcessBuilder(binary.toString(), "run", "-c", config.toString())
+            killStaleProcesses()
+
+            val pb = ProcessBuilder(
+                binary.toString(), "run", "-c", config.toString(),
+                "-format", "json"
+            )
                 .directory(APP_DIR.toFile())
-                .redirectErrorStream(true)
-            // Exclude the Xray process's own traffic from the TUN to avoid routing loops;
-            // on Linux this is handled via autoOutboundsInterface in the config.
-            if (!isWindows()) {
-                pb.environment()["XRAY_TUN_EXCLUDE_SELF"] = "1"
-            }
+                .redirectErrorStream(false)
 
             val proc = pb.start()
             process = proc
             logPumpActive = true
             pumpLogs(proc)
-            watchExit(proc, profile)
+            pumpStderr(proc)
+            watchExit(proc)
+            log("[OK] Xray process started (pid ${proc.pid()})")
 
-            // Give Xray a moment; fail fast on bad configs
-            Thread.sleep(800)
-            if (!proc.isAlive) {
-                throw IllegalStateException("Xray exited during startup — see Logs for details.")
+            // ---- 5. TUN readiness ---------------------------------------------------
+            log("[START] Waiting for TUN")
+            waitAndThrowIfDead(proc)
+            awaitTunAdapter()
+            log("[OK] TUN adapter detected (${tunName()})")
+
+            // ---- 6. connectivity verification ---------------------------------------
+            log("[START] Verifying routing")
+            waitAndThrowIfDead(proc)
+            require(localInboundReady()) {
+                "Xray local inbound (127.0.0.1:$LOCAL_PROBE_PORT) never became reachable" +
+                    startupHint()
             }
+            log("[OK] Routing verified")
 
+            // ---- 7. CONNECTED --------------------------------------------------------
             _state.value = _state.value.copy(
                 status = DesktopConnectionStatus.CONNECTED,
                 connectedAtMs = System.currentTimeMillis(),
                 errorMessage = null
             )
-            appendLog("VPN", "Connected. System traffic is routed through Xray-core TUN.")
+            log("[VPN] Connected")
             startTrafficSampler()
         } catch (e: Exception) {
-            appendLog("ERROR", "Connect failed: ${e.message}")
-            stopInternal(clearState = false)
+            appendLog("[ERROR]", "Connect failed: ${e.message}")
+            stopInternal()
             _state.value = _state.value.copy(
                 status = DesktopConnectionStatus.FAILED,
                 errorMessage = e.message ?: "Unknown error"
@@ -127,9 +201,9 @@ class XrayDesktopEngine {
 
     fun disconnect() {
         _state.value = _state.value.copy(status = DesktopConnectionStatus.DISCONNECTING)
-        stopInternal(clearState = false)
+        stopInternal()
         _state.value = DesktopConnectionState(status = DesktopConnectionStatus.DISCONNECTED)
-        appendLog("VPN", "Disconnected.")
+        appendLog("[VPN]", "Disconnected — TUN released, routes restored.")
     }
 
     /** True when the Xray process is alive. */
@@ -139,14 +213,19 @@ class XrayDesktopEngine {
 
     // ---------- internals ----------
 
-    private fun stopInternal(clearState: Boolean) {
+    private fun stopInternal() {
         logPumpActive = false
         try {
             process?.destroy()
-            Thread.sleep(150)
-            if (process?.isAlive == true) process?.destroyForcibly()
+            // Give a graceful window, then force-kill; never orphan the child.
+            if (process != null && !process!!.waitFor(3, TimeUnit.SECONDS)) {
+                process?.destroyForcibly()
+                process?.waitFor(2, TimeUnit.SECONDS)
+            }
         } catch (_: Exception) {}
         process = null
+        if (isWindows()) killStaleProcesses()
+        _traffic.value = TrafficSnapshot()
     }
 
     private fun pumpLogs(proc: Process) {
@@ -157,19 +236,248 @@ class XrayDesktopEngine {
         }
     }
 
-    private fun watchExit(proc: Process, profile: ServerProfile) {
+    /** Capture stderr into a bounded ring buffer so real Xray errors surface in diagnostics. */
+    private fun pumpStderr(proc: Process) {
         scope.launch {
-            proc.waitFor()
+            proc.errorStream.bufferedReader().forEachLine { line ->
+                stderrBuffer.add(line)
+                appendLogRaw("[xray:err] ${line.take(400)}")
+            }
+        }
+    }
+
+    private fun watchExit(proc: Process) {
+        scope.launch {
+            val code = proc.waitFor()
             if (logPumpActive && _state.value.status == DesktopConnectionStatus.CONNECTED) {
                 // Unexpected death while connected — fail closed (TUN dies with process).
-                appendLog("ERROR", "Xray-core exited unexpectedly (code ${proc.exitValue()}). Tunnel closed.")
+                appendLog("[ERROR]", "Xray-core exited unexpectedly (code $code). Tunnel closed.")
                 _state.value = _state.value.copy(
                     status = DesktopConnectionStatus.FAILED,
-                    errorMessage = "Xray-core exited unexpectedly (code ${proc.exitValue()})"
+                    errorMessage = "Xray-core exited unexpectedly (code $code)"
                 )
             }
         }
     }
+
+    private fun waitAndThrowIfDead(proc: Process) {
+        if (!proc.isAlive) {
+            throw IllegalStateException(
+                "Xray exited during startup (code ${proc.exitValue()})" + startupHint()
+            )
+        }
+    }
+
+    private fun startupHint(): String {
+        val err = synchronized(stderrBuffer.lines) {
+            stderrBuffer.lines.filter { it.isNotBlank() }.takeLast(3).joinToString("; ")
+        }
+        return if (err.isBlank()) "" else " — Xray said: $err"
+    }
+
+    /**
+     * Run `xray run -test -c config` and fail loudly on invalid configuration.
+     * Uses a bounded wait so a hung Xray can't stall connect forever.
+     */
+    private fun validateConfig(binary: Path, config: Path) {
+        val proc = ProcessBuilder(binary.toString(), "run", "-test", "-c", config.toString())
+            .directory(APP_DIR.toFile())
+            .redirectErrorStream(true)
+            .start()
+        val output = StringBuilder()
+        proc.inputStream.bufferedReader().forEachLine { output.appendLine(it) }
+        val finished = proc.waitFor(15, TimeUnit.SECONDS)
+        if (!finished) {
+            proc.destroyForcibly()
+            throw IllegalStateException("Xray config validation timed out")
+        }
+        if (proc.exitValue() != 0) {
+            val detail = output.lines().filter { it.isNotBlank() }.takeLast(4).joinToString("; ")
+            throw IllegalStateException(
+                "Xray configuration is invalid" + (if (detail.isBlank()) "" else ": $detail")
+            )
+        }
+    }
+
+    /** Poll until the expected TUN adapter exists or timeout. Never sleeps blindly. */
+    private fun awaitTunAdapter() {
+        val name = tunName()
+        val deadline = System.currentTimeMillis() + TUN_WAIT_SECONDS * 1000L
+        while (System.currentTimeMillis() < deadline) {
+            if (process?.isAlive != true) {
+                throw IllegalStateException("Xray exited during startup" + startupHint())
+            }
+            if (tunAdapterExists(name)) return
+            Thread.sleep(300)
+        }
+        throw IllegalStateException(
+            "Timed out waiting for TUN adapter '$name' after ${TUN_WAIT_SECONDS}s." +
+                if (isWindows()) " Is Wintun installed and is the app elevated?" else ""
+        )
+    }
+
+    private fun tunAdapterExists(name: String): Boolean =
+        if (isWindows()) windowsAdapterExists(name) else linuxAdapterExists(name)
+
+    /** `netsh interface show interface name=...` succeeds only when the adapter exists. */
+    private fun windowsAdapterExists(name: String): Boolean = try {
+        val p = ProcessBuilder("netsh", "interface", "show", "interface", "name=$name")
+            .redirectErrorStream(true).start()
+        val ok = p.waitFor(10, TimeUnit.SECONDS)
+        p.inputStream.close()
+        ok
+    } catch (_: Exception) { false }
+
+    private fun linuxAdapterExists(name: String): Boolean =
+        java.io.File("/sys/class/net/$name").exists()
+
+    /**
+     * Probe the local SOCKS inbound Xray binds at 127.0.0.1:LOCAL_PROBE_PORT.
+     * When this accepts TCP connections, Xray's internal routing table is live.
+     */
+    private fun localInboundReady(): Boolean {
+        repeat(10) {
+            try {
+                Socket().use { s ->
+                    s.connect(InetSocketAddress("127.0.0.1", LOCAL_PROBE_PORT), 1000)
+                }
+                return true
+            } catch (_: Exception) {
+                Thread.sleep(300)
+            }
+        }
+        return false
+    }
+
+    /** Kill leftover maximus-vpn xray processes from crashed sessions (best effort). */
+    private fun killStaleProcesses() {
+        if (!isWindows()) return
+        try {
+            val p = ProcessBuilder("tasklist", "/FI", "IMAGENAME eq xray.exe", "/FO", "CSV", "/NH")
+                .redirectErrorStream(true).start()
+            val out = p.inputStream.bufferedReader().readText()
+            p.waitFor(10, TimeUnit.SECONDS)
+            // tasklist prints one quoted-CSV row per matching process
+            val count = out.lineSequence().count { it.startsWith("\"xray.exe\"") }
+            if (count > 1 || (count >= 1 && process?.isAlive == true)) {
+                appendLog("[WARN]", "Found $count stale xray.exe process(es); terminating them.")
+                ProcessBuilder("taskkill", "/F", "/IM", "xray.exe").start().waitFor(10, TimeUnit.SECONDS)
+            }
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Extract the pinned Xray binary into BIN_DIR (never CWD).
+     * Verifies presence, readability, and PE/ELF machine architecture before returning.
+     */
+    internal fun ensureXrayBinary(): Path {
+        val binaryName = if (isWindows()) "xray.exe" else "xray"
+        val target = BIN_DIR.resolve(binaryName)
+        if (!Files.exists(target)) {
+            val configured = System.getenv("MAXIMUS_XRAY_PATH")?.takeIf { it.isNotBlank() }?.let(Path::of)
+            val source = when {
+                configured != null && Files.exists(configured) -> configured
+                else -> {
+                    val stream = XrayDesktopEngine::class.java.getResourceAsStream("/xray/$binaryName")
+                        ?: throw IllegalStateException(
+                            "Xray binary is not bundled with this build (missing resource /xray/$binaryName). " +
+                            "CI injects it at release time."
+                        )
+                    stream.use { input -> Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING) }
+                    target
+                }
+            }
+            if (source != target) Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING)
+        }
+        target.toFile().setExecutable(true)
+        validateExecutableArch(target)
+        return target
+    }
+
+    /**
+     * Extract geoip.dat/geosite.dat next to the binary so `geoip:private` routing
+     * works offline (Xray otherwise tries to download them at startup).
+     */
+    internal fun ensureGeoData() {
+        for (name in listOf("geoip.dat", "geosite.dat")) {
+            val target = BIN_DIR.resolve(name)
+            if (!Files.exists(target)) {
+                val stream = XrayDesktopEngine::class.java.getResourceAsStream("/xray/$name")
+                    ?: continue // optional resource — config still valid without geo rules
+                stream.use { input -> Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING) }
+                appendLogRaw("[OK] $name extracted")
+            }
+        }
+    }
+
+    /**
+     * Extract wintun.dll next to xray.exe so LoadLibrary finds it.
+     * Verifies presence and that it really is a 64-bit PE.
+     */
+    internal fun ensureWintunRuntime(): Path {
+        if (!isWindows()) return APP_DIR // Linux uses kernel TUN; nothing to extract.
+        val target = BIN_DIR.resolve("wintun.dll")
+        if (!Files.exists(target)) {
+            val stream = XrayDesktopEngine::class.java.getResourceAsStream("/xray/wintun.dll")
+                ?: throw IllegalStateException(
+                    "[ERROR] Wintun runtime is missing — /xray/wintun.dll was not packaged ($WINTUN_VERSION_PINNED required)."
+                )
+            stream.use { input -> Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING) }
+        }
+        val bytes = Files.readAllBytes(target)
+        require(bytes.size > 64 && bytes[0] == 'M'.code.toByte() && bytes[1] == 'Z'.code.toByte()) {
+            "wintun.dll is corrupt (bad MZ header)"
+        }
+        require(isPe64(bytes)) { "wintun.dll is not a 64-bit DLL" }
+        return target
+    }
+
+    /** True when the current process holds an elevated (admin) token on Windows. */
+    internal fun isElevatedWindows(): Boolean {
+        if (!isWindows()) return true
+        return try {
+            val p = ProcessBuilder("net", "session").redirectErrorStream(true).start()
+            p.waitFor(10, TimeUnit.SECONDS) == true
+        } catch (_: Exception) { false }
+    }
+
+    private fun validateExecutableArch(path: Path) {
+        val bytes = Files.readAllBytes(path)
+        if (isWindows()) {
+            require(bytes.size > 64 && bytes[0] == 'M'.code.toByte() && bytes[1] == 'Z'.code.toByte()) {
+                "${path.fileName} is corrupt (bad MZ header)"
+            }
+            require(isPe64(bytes)) { "${path.fileName} is not a 64-bit executable" }
+        } else {
+            // ELF: magic \x7fELF and EI_CLASS==2 (64-bit), EI_DATA==1 (little-endian)
+            require(bytes.size > 20 &&
+                    bytes[0] == 0x7f.toByte() && bytes[1] == 'E'.code.toByte() &&
+                    bytes[2] == 'L'.code.toByte() && bytes[3] == 'F'.code.toByte()) {
+                "${path.fileName} is not an ELF binary"
+            }
+            require(bytes[4].toInt() == 2) { "${path.fileName} is not 64-bit ELF" }
+        }
+    }
+
+    /** Read PE optional-header Magic: 0x20b == PE32+ (64-bit). */
+    private fun isPe64(b: ByteArray): Boolean {
+        if (b.size < 0x40 + 4 + 20 + 2) return false
+        val peOffset = ((b[0x3f].toInt() and 0xff) shl 24) or
+                ((b[0x3e].toInt() and 0xff) shl 16) or
+                ((b[0x3d].toInt() and 0xff) shl 8) or
+                (b[0x3c].toInt() and 0xff)
+        if (peOffset <= 0 || peOffset + 4 + 20 + 2 > b.size) return false
+        if (b[peOffset] != 'P'.code.toByte() || b[peOffset + 1] != 'E'.code.toByte()) return false
+        val optHeaderStart = peOffset + 4 + 20
+        val magic = ((b[optHeaderStart].toInt() and 0xff) shl 8) or (b[optHeaderStart + 1].toInt() and 0xff)
+        return magic == 0x20b
+    }
+
+    private fun tunName(): String =
+        if (isWindows()) "MaximusVPN" else "maximus0"
+
+    private fun isWindows(): Boolean =
+        System.getProperty("os.name").lowercase().contains("win")
 
     /**
      * Sample Xray's stats API output by parsing log lines of the form
@@ -200,9 +508,10 @@ class XrayDesktopEngine {
     private fun parseTrafficCounter(kind: String): Long =
         if (kind == "uplink") latestUpLink else latestDownLink
 
+    private fun log(message: String) = appendLogRaw(message)
+
     private fun appendLog(category: String, message: String) {
-        val ts = java.time.LocalTime.now().toString().take(8)
-        appendLogRaw("[$category] $message")
+        appendLogRaw("$category $message")
     }
 
     private fun appendLogRaw(line: String) {
@@ -221,30 +530,7 @@ class XrayDesktopEngine {
         }
     }
 
-    internal fun ensureXrayBinary(): Path {
-        val binaryName = if (isWindows()) "xray.exe" else "xray"
-        val target = APP_DIR.resolve(binaryName)
-        if (Files.exists(target)) {
-            target.toFile().setExecutable(true)
-            return target
-        }
-        val configured = System.getenv("MAXIMUS_XRAY_PATH")?.takeIf { it.isNotBlank() }?.let(Path::of)
-        if (configured != null && Files.exists(configured)) {
-            Files.copy(configured, target, StandardCopyOption.REPLACE_EXISTING)
-        } else {
-            val resource = "/xray/$binaryName"
-            val stream = XrayDesktopEngine::class.java.getResourceAsStream(resource)
-                ?: throw IllegalStateException(
-                    "Xray binary is not bundled with this build. CI injects it at release time."
-                )
-            stream.use { input -> Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING) }
-        }
-        target.toFile().setExecutable(true)
-        return target
-    }
-
-    private fun isWindows(): Boolean =
-        System.getProperty("os.name").lowercase().contains("win")
+    internal fun ensureXrayBinaryLegacy(): Path = ensureXrayBinary()
 }
 
 /** Immutable parsed representation of a vless:// URI. */

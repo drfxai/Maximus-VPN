@@ -20,6 +20,7 @@ debug.keystore
 # Xray-core native binaries are downloaded at build time (CI) — never committed
 app/src/main/jniLibs/arm64-v8a/libxray.so
 desktop/src/main/resources/xray/
+!desktop/src/main/resources/xray/README.txt
 
 # Gradle / Compose build outputs
 desktop/build/

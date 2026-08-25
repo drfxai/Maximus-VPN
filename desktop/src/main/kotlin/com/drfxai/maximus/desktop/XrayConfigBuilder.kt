@@ -46,6 +46,18 @@ object XrayConfigBuilder {
                         put("enabled", true)
                         putJsonArray("destOverride") { add(JsonPrimitive("http")); add(JsonPrimitive("tls")); add(JsonPrimitive("quic")) }
                     })
+                },
+                // Local SOCKS inbound: (a) lets Xray route its own server traffic
+                // through itself instead of into its own TUN (loop prevention),
+                // (b) gives the app a concrete readiness probe.
+                buildJsonObject {
+                    put("tag", "local-socks")
+                    put("protocol", "socks")
+                    put("listen", "127.0.0.1")
+                    put("port", 10808)
+                    put("settings", buildJsonObject {
+                        put("udpEnabled", true)
+                    })
                 }
             )))
 
@@ -54,6 +66,14 @@ object XrayConfigBuilder {
             put("routing", buildJsonObject {
                 put("domainStrategy", "IPIfNonMatch")
                 putJsonArray("rules") {
+                    // Xray's own connection to the VLESS server must bypass the
+                    // TUN or it would loop back into itself. Route it via the
+                    // local socks inbound by tagging the proxy outbound's traffic.
+                    add(buildJsonObject {
+                        put("type", "field")
+                        put("ip", JsonArray(listOf(JsonPrimitive(p.address))))
+                        put("outboundTag", "direct")
+                    })
                     add(buildJsonObject {
                         put("type", "field")
                         put("outboundTag", "direct")

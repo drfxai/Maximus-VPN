@@ -75,6 +75,19 @@ jobs:
           Invoke-WebRequest -Uri "https://github.com/XTLS/Xray-core/releases/download/v${env:XRAY_VERSION}/Xray-windows-64.zip" -OutFile xray.zip
           Expand-Archive xray.zip -DestinationPath xray-unpacked -Force
           Copy-Item (Get-ChildItem xray-unpacked -Recurse -Filter xray.exe | Select-Object -First 1).FullName desktop/src/main/resources/xray/xray.exe -Force
+      - name: Download Wintun (pinned, checksum-verified)
+        shell: pwsh
+        env:
+          WINTUN_VERSION: '0.14.1'
+          WINTUN_SHA256: 'e5da8447dc2c320edc0fc52fa01885c103de8c118481f683643cacc3220dafce'
+        run: |
+          Invoke-WebRequest -Uri "https://www.wintun.net/builds/wintun-${env:WINTUN_VERSION}.zip" -OutFile wintun.zip
+          Expand-Archive wintun.zip -DestinationPath wintun-unpacked -Force
+          $dll = "wintun-unpacked/wintun/bin/amd64/wintun.dll"
+          $hash = (Get-FileHash $dll -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne "${env:WINTUN_SHA256}") { throw "Wintun checksum mismatch: $hash" }
+          Copy-Item $dll desktop/src/main/resources/xray/wintun.dll -Force
+          Write-Host "[OK] wintun.dll verified ($hash)"
       - name: Compile
         working-directory: desktop
         run: gradle compileKotlin --no-daemon

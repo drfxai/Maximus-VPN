@@ -13,6 +13,9 @@ on:
 
 env:
   XRAY_VERSION: '26.7.28'
+  # Wintun driver required by Xray's TUN inbound on Windows.
+  WINTUN_VERSION: '0.14.1'
+  WINTUN_SHA256: 'e5da8447dc2c320edc0fc52fa01885c103de8c118481f683643cacc3220dafce'
 
 jobs:
   android:
@@ -89,6 +92,42 @@ jobs:
           $x = Get-ChildItem xray-unpacked -Recurse -Filter xray.exe | Select-Object -First 1
           if (-not $x) { throw 'Xray Windows x64 binary was not found in the archive.' }
           Copy-Item $x.FullName desktop/src/main/resources/xray/xray.exe -Force
+      - name: Download Wintun (pinned, checksum-verified)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://www.wintun.net/builds/wintun-${env:WINTUN_VERSION}.zip" -OutFile wintun.zip
+          Expand-Archive wintun.zip -DestinationPath wintun-unpacked -Force
+          $dll = "wintun-unpacked/wintun/bin/amd64/wintun.dll"
+          if (-not (Test-Path $dll)) { throw 'wintun.dll (amd64) was not found in the archive.' }
+          $hash = (Get-FileHash $dll -Algorithm SHA256).Hash.ToLower()
+          Write-Host "wintun.dll sha256 = $hash"
+          if ($hash -ne "${env:WINTUN_SHA256}") {
+            throw "Wintun checksum mismatch: expected ${env:WINTUN_SHA256}, got $hash"
+          }
+          Copy-Item $dll desktop/src/main/resources/xray/wintun.dll -Force
+      - name: Download geo data (pinned to Xray release tag)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/Loyalsoldier/geoip/releases/download/${env:XRAY_VERSION}/geoip.dat" -OutFile desktop/src/main/resources/xray/geoip.dat
+          if ((Get-Item desktop/src/main/resources/xray/geoip.dat).Length -lt 1MB) { throw 'geoip.dat missing or too small' }
+          Write-Host "[OK] geoip.dat downloaded"
+      - name: Verify runtime resources before packaging
+        shell: pwsh
+        run: |
+          $xray = "desktop/src/main/resources/xray/xray.exe"
+          $wtun = "desktop/src/main/resources/xray/wintun.dll"
+          foreach ($f in @($xray, $wtun)) {
+            if (-not (Test-Path $f)) { throw "Required resource missing: $f" }
+            if ((Get-Item $f).Length -lt 100KB) { throw "Resource suspiciously small: $f" }
+            $bytes = [System.IO.File]::ReadAllBytes($f)
+            if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw "$f is not a PE binary (bad MZ)" }
+          }
+          # xray.exe must be x64: PE32+ magic 0x20b at optional header
+          $b = [System.IO.File]::ReadAllBytes($xray)
+          $peOff = [BitConverter]::ToInt32($b, 0x3C)
+          $magic = [BitConverter]::ToUInt16($b, $peOff + 24)
+          if ($magic -ne 0x20B) { throw "xray.exe is not x86-64 (PE magic 0x{0:X})" -f $magic }
+          Write-Host "[OK] xray.exe (x64) + wintun.dll verified"
       - name: Build Windows MSI and EXE
         shell: pwsh
         working-directory: desktop
@@ -104,6 +143,14 @@ jobs:
           New-Item -ItemType Directory -Force -Path release/windows | Out-Null
           Copy-Item desktop/build/compose/binaries/main/msi/*.msi release/windows/ -ErrorAction SilentlyContinue
           Copy-Item desktop/build/compose/binaries/main/exe/*.exe release/windows/ -ErrorAction SilentlyContinue
+          if (-not (Get-ChildItem release/windows -File | Where-Object Length -gt 10MB)) {
+            throw 'Windows installer(s) missing or implausibly small — packaging failed.'
+          }
+          # Sanity: installers must be big enough to contain xray (~37MB) + wintun + JRE.
+          Get-ChildItem release/windows | ForEach-Object {
+            Write-Host ("[OK] {0}  {1:N0} MB" -f $_.Name, ($_.Length/1MB))
+            if ($_.Length -lt 60MB) { throw "$($_.Name) is smaller than expected (<60MB); runtime deps likely absent." }
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: maximus-windows-x64
