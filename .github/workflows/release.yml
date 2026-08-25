@@ -16,14 +16,14 @@ env:
 
 jobs:
   android:
-    name: Android APK + AAB
+    name: Android APK + AAB (arm64-v8a)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
       - uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '9.3.1'
@@ -61,8 +61,8 @@ jobs:
         shell: bash
         run: |
           mkdir -p release/android
-          cp app/build/outputs/apk/release/*.apk release/android/Maximus-VPN-Android-${{ steps.version.outputs.version }}.apk || true
-          cp app/build/outputs/bundle/release/*.aab release/android/Maximus-VPN-Android-${{ steps.version.outputs.version }}.aab || true
+          cp app/build/outputs/apk/release/*.apk release/android/Maximus-VPN-Android-arm64-v8a-${{ steps.version.outputs.version }}.apk || true
+          cp app/build/outputs/bundle/release/*.aab release/android/Maximus-VPN-Android-arm64-v8a-${{ steps.version.outputs.version }}.aab || true
       - uses: actions/upload-artifact@v4
         with:
           name: maximus-android
@@ -76,7 +76,7 @@ jobs:
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
       - uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '9.3.1'
@@ -116,7 +116,7 @@ jobs:
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
       - uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '9.3.1'
