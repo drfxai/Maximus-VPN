@@ -1,6 +1,0 @@
-{
-  "name": "Maximus",
-  "description": "Maximus is a professional, high-performance VLESS & Xray-core Android VPN client by DrFXAi, featuring real VpnService tunneling, routing controls, diagnostics, and secure profile management.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
