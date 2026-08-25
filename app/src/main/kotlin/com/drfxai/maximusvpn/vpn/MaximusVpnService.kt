@@ -185,7 +185,16 @@ class MaximusVpnService : VpnService() {
             showForegroundNotification("Connecting to ${profile.name}...")
 
             // 2. Build real Xray-core tun config and start the engine with our TUN fd.
-            val xrayConfigJson = XrayConfigBuilder.buildTunConfig(profile, settings)
+            val ipv6 = settings.ipv6Enabled
+            val xrayConfigJson = XrayConfigBuilder.buildTunConfig(
+                profile, settings,
+                tunFd = pfd.fd,
+                ipv4Address = "172.19.0.1", inet4Prefix = 30,
+                ipv6Address = "fdfe:dcba:9876::1", inet6Prefix = 126
+            ).let { json -> json } // addresses above MUST mirror Builder.addAddress calls
+            if (ipv6) {
+                require(xrayConfigJson.contains("inet6_address")) { "IPv6 route configured but missing in Xray config" }
+            }
             XrayLogManager.appendLog("Generated Xray tun config. Redacted preview:\n${SecretRedactor.redact(xrayConfigJson)}", "CONFIG")
 
             val startResult = xrayCore.start(xrayConfigJson, pfd.fd)

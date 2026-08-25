@@ -96,7 +96,7 @@ class SettingsViewModel(
                 publicKey = "SAMPLE_KEY",
                 flow = "xtls-rprx-vision"
             )
-        val rawJson = XrayConfigBuilder.buildTunConfig(profile, currentSettings)
+        val rawJson = XrayConfigBuilder.buildTunConfig(profile, currentSettings, tunFd = 0)
         return SecretRedactor.redact(rawJson)
     }
 

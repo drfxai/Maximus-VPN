@@ -17,7 +17,21 @@ import org.json.JSONObject
  */
 object XrayConfigBuilder {
 
-    fun buildTunConfig(profile: VlessProfile, settings: AppSettings): String {
+    /**
+     * @param tunFd inherited fd number the core should attach to (from Os.dup in the engine).
+     * @param ipv4Address/inet4Prefix must match VpnService.Builder.addAddress.
+     * @param ipv6Enabled when false, no IPv6 route/address is added AND queryStrategy stays
+     *   IPv4-only — never add an IPv6 route Xray can't carry (black-hole).
+     */
+    fun buildTunConfig(
+        profile: VlessProfile,
+        settings: AppSettings,
+        tunFd: Int,
+        ipv4Address: String = "172.19.0.1",
+        inet4Prefix: Int = 30,
+        ipv6Address: String = "fdfe:dcba:9876::1",
+        inet6Prefix: Int = 126
+    ): String {
         val root = JSONObject()
 
         // Logging — keep at warning to limit PII in logs; access log disabled
@@ -41,18 +55,29 @@ object XrayConfigBuilder {
         }
         root.put("dns", JSONObject().apply {
             put("servers", dnsServers)
-            put("queryStrategy", "UseIPv4")
+            // Only force IPv4 answers when the tunnel has no IPv6 route; otherwise
+            // dual-stack so AAAA results are usable instead of black-holed.
+            put("queryStrategy", if (settings.ipv6Enabled) "UseIP" else "UseIPv4")
             put("disableFallback", false)
         })
 
-        // Inbounds: single tun inbound fed by the VpnService fd
+        // Inbounds: single tun inbound fed by the inherited VpnService fd.
+        // stack=gvisor: userspace TCP/IP, required when attaching to an fd we own.
         val inbounds = JSONArray()
+        val tunSettings = JSONObject().apply {
+            put("mtu", settings.mtu)
+            put("stack", "gvisor")
+            // Current cores accept the fd directly in settings; env vars remain set too.
+            put("fd", tunFd)
+            putJsonArrayCompat("inet4_address", "$ipv4Address/$inet4Prefix")
+            if (settings.ipv6Enabled) {
+                putJsonArrayCompat("inet6_address", "$ipv6Address/$inet6Prefix")
+            }
+        }
         val tunInbound = JSONObject().apply {
             put("tag", "tun-in")
             put("protocol", "tun")
-            put("settings", JSONObject().apply {
-                put("mtu", settings.mtu)
-            })
+            put("settings", tunSettings)
             put("sniffing", JSONObject().apply {
                 put("enabled", true)
                 put("destOverride", JSONArray().apply {
@@ -146,6 +171,10 @@ object XrayConfigBuilder {
         })
 
         return root.toString(2)
+    }
+
+    private fun JSONObject.putJsonArrayCompat(key: String, vararg values: String) {
+        put(key, JSONArray().apply { values.forEach { put(it) } })
     }
 
     private fun buildStreamSettings(profile: VlessProfile): JSONObject {

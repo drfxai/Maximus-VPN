@@ -77,7 +77,7 @@ android {
   }
   packaging {
     // libxray.so is a large gomobile library; keep default compression off for it
-    jniLibs.useLegacyPackaging = false
+    jniLibs.useLegacyPackaging = true
   }
 }
 
