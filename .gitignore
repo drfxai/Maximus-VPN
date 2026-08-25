@@ -27,3 +27,4 @@ desktop/tmp/
 app/build/
 *.log
 desktop/xray-win*
+jobs*.json
