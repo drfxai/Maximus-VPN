@@ -1,0 +1,165 @@
+name: Maximus Multi-Platform Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag, e.g. v1.0.0'
+        required: true
+        default: 'v1.0.0'
+
+env:
+  XRAY_VERSION: '26.7.28'
+
+jobs:
+  android:
+    name: Android APK + AAB
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '9.3.1'
+      - name: Compute version
+        id: version
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then TAG="${{ inputs.tag }}"; fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "code=${VERSION//./}" >> "$GITHUB_OUTPUT"
+      - name: Build Android release artifacts
+        env:
+          KEYSTORE_PATH: ${{ secrets.KEYSTORE_PATH }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          gradle :app:assembleRelease :app:bundleRelease \
+            -PversionName=${{ steps.version.outputs.version }} \
+            -PversionCode=${{ steps.version.outputs.code }} \
+            --no-daemon
+      - name: Collect Android artifacts
+        shell: bash
+        run: |
+          mkdir -p release/android
+          cp app/build/outputs/apk/release/*.apk release/android/Maximus-VPN-Android-${{ steps.version.outputs.version }}.apk || true
+          cp app/build/outputs/bundle/release/*.aab release/android/Maximus-VPN-Android-${{ steps.version.outputs.version }}.aab || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: maximus-android
+          path: release/android/*
+
+  windows:
+    name: Windows x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '9.3.1'
+      - name: Download Xray-core Windows x64
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path desktop/src/main/resources/xray | Out-Null
+          Invoke-WebRequest -Uri "https://github.com/XTLS/Xray-core/releases/download/v${env:XRAY_VERSION}/Xray-windows-64.zip" -OutFile xray.zip
+          Expand-Archive xray.zip -DestinationPath xray-unpacked -Force
+          $x = Get-ChildItem xray-unpacked -Recurse -Filter xray.exe | Select-Object -First 1
+          if (-not $x) { throw 'Xray Windows x64 binary was not found in the archive.' }
+          Copy-Item $x.FullName desktop/src/main/resources/xray/xray.exe -Force
+      - name: Build Windows MSI and EXE
+        shell: pwsh
+        working-directory: desktop
+        run: |
+          $tag = "${env:GITHUB_REF_NAME}"
+          if ("${env:GITHUB_EVENT_NAME}" -eq "workflow_dispatch") { $tag = "${{ inputs.tag }}" }
+          $version = $tag -replace '^v', ''
+          gradle packageMsi packageExe -PappVersion=$version --no-daemon
+      - name: Collect Windows artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release/windows | Out-Null
+          Copy-Item desktop/build/compose/binaries/main/msi/*.msi release/windows/ -ErrorAction SilentlyContinue
+          Copy-Item desktop/build/compose/binaries/main/exe/*.exe release/windows/ -ErrorAction SilentlyContinue
+      - uses: actions/upload-artifact@v4
+        with:
+          name: maximus-windows-x64
+          path: release/windows/*
+
+  ubuntu:
+    name: Ubuntu x64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '9.3.1'
+      - name: Download Xray-core Linux x64
+        shell: bash
+        run: |
+          mkdir -p desktop/src/main/resources/xray
+          curl -L --fail --retry 3 -o xray.zip "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip"
+          unzip -o xray.zip -d xray-unpacked
+          XRAY_BIN=$(find xray-unpacked -type f -name xray | head -n 1)
+          test -n "$XRAY_BIN"
+          cp "$XRAY_BIN" desktop/src/main/resources/xray/xray
+          chmod +x desktop/src/main/resources/xray/xray
+      - name: Build Ubuntu DEB
+        shell: bash
+        working-directory: desktop
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then TAG="${{ inputs.tag }}"; fi
+          VERSION="${TAG#v}"
+          gradle packageDeb -PappVersion="$VERSION" --no-daemon
+      - name: Collect Ubuntu artifacts
+        shell: bash
+        run: |
+          mkdir -p release/ubuntu
+          cp desktop/build/compose/binaries/main/deb/*.deb release/ubuntu/ || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: maximus-ubuntu-x64
+          path: release/ubuntu/*
+
+  publish:
+    name: Publish GitHub Release
+    needs: [android, windows, ubuntu]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+      - name: Resolve tag
+        id: tag
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then TAG="${{ inputs.tag }}"; fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          mkdir -p flat
+          find release-assets -type f -maxdepth 4 -exec cp {} flat/ \;
+          gh release create "$TAG" flat/* --generate-notes --title "Maximus VPN $TAG"
