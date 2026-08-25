@@ -18,6 +18,18 @@ version = if (Regex("^[0-9][A-Za-z0-9.+~-]*$").matches(appVersion)) {
     "1.0.0"
 }
 
+// Windows installers (MSI/EXE) require strict numeric MAJOR.MINOR.BUILD
+// (caps 255.255.65535) — no pre-release suffixes like "-ci". Normalize here so
+// any CI-passed appVersion (e.g. "0.0.0-ci", "2.5", "v2.5.1") packages cleanly.
+val numericParts = Regex("\\d+").findAll(version.toString())
+    .take(3).map { match -> match.value.toInt() }.toList()
+val windowsVersion = when (numericParts.size) {
+    3 -> "${numericParts[0].coerceIn(1, 255)}.${numericParts[1].coerceIn(0, 255)}.${numericParts[2].coerceIn(0, 65535)}"
+    2 -> "${numericParts[0].coerceIn(1, 255)}.${numericParts[1].coerceIn(0, 255)}.0"
+    1 -> "${numericParts[0].coerceIn(1, 255)}.0.0"
+    else -> "1.0.0"
+}
+
 
 dependencies {
     implementation(compose.desktop.currentOs)
@@ -33,6 +45,10 @@ compose.desktop {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe, TargetFormat.Deb)
             packageName = "Maximus VPN"
             packageVersion = version.toString()
+            windows {
+                msiPackageVersion = windowsVersion
+                exePackageVersion = windowsVersion
+            }
             description = "Maximus VPN desktop client powered by Xray-core"
             vendor = "DrFXAi"
             copyright = "Copyright © 2026 DrFXAi"

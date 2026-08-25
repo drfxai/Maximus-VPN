@@ -30,7 +30,7 @@ jobs:
           unzip -o xray-android.zip -d xray-android-unpacked
           cp "$(find xray-android-unpacked -name xray | head -1)" app/src/main/jniLibs/arm64-v8a/libxray.so
       - name: Unit tests
-        run: gradle :app:testReleaseUnitTest --no-daemon
+        run: gradle :app:testDebugUnitTest --no-daemon
       - name: Build APKs
         env:
           KEYSTORE_PATH: ${{ secrets.KEYSTORE_PATH }}
