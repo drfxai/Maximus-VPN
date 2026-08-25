@@ -1,0 +1,353 @@
+{
+  "total_count": 3,
+  "jobs": [
+    {
+      "id": 97889207387,
+      "run_id": 32874537779,
+      "workflow_name": "Maximus CI Build",
+      "head_branch": "main",
+      "run_url": "https://api.github.com/repos/drfxai/Maximus-VPN/actions/runs/32874537779",
+      "run_attempt": 1,
+      "node_id": "CR_kwDORZuH5s8AAAAWyqbEWw",
+      "head_sha": "16c540e8c6581c93c07dc73f585abd443a7ccb74",
+      "url": "https://api.github.com/repos/drfxai/Maximus-VPN/actions/jobs/97889207387",
+      "html_url": "https://github.com/drfxai/Maximus-VPN/actions/runs/32874537779/job/97889207387",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-08-25T16:52:25Z",
+      "started_at": "2026-08-25T16:52:31Z",
+      "completed_at": "2026-08-25T16:56:08Z",
+      "name": "Desktop Windows x64",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-08-25T16:52:32Z",
+          "completed_at": "2026-08-25T16:52:36Z"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-08-25T16:52:36Z",
+          "completed_at": "2026-08-25T16:52:42Z"
+        },
+        {
+          "name": "Run actions/setup-java@v5",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-08-25T16:52:42Z",
+          "completed_at": "2026-08-25T16:52:43Z"
+        },
+        {
+          "name": "Run gradle/actions/setup-gradle@v6",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-08-25T16:52:43Z",
+          "completed_at": "2026-08-25T16:53:01Z"
+        },
+        {
+          "name": "Download Xray-core Windows x64",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-08-25T16:53:01Z",
+          "completed_at": "2026-08-25T16:53:03Z"
+        },
+        {
+          "name": "Compile",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-08-25T16:53:03Z",
+          "completed_at": "2026-08-25T16:54:21Z"
+        },
+        {
+          "name": "Package EXE installer",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-08-25T16:54:21Z",
+          "completed_at": "2026-08-25T16:55:49Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-08-25T16:55:49Z",
+          "completed_at": "2026-08-25T16:55:53Z"
+        },
+        {
+          "name": "Post Run gradle/actions/setup-gradle@v6",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 14,
+          "started_at": "2026-08-25T16:55:53Z",
+          "completed_at": "2026-08-25T16:56:03Z"
+        },
+        {
+          "name": "Post Run actions/setup-java@v5",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 15,
+          "started_at": "2026-08-25T16:56:03Z",
+          "completed_at": "2026-08-25T16:56:04Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 16,
+          "started_at": "2026-08-25T16:56:04Z",
+          "completed_at": "2026-08-25T16:56:06Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 17,
+          "started_at": "2026-08-25T16:56:06Z",
+          "completed_at": "2026-08-25T16:56:06Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/drfxai/Maximus-VPN/check-runs/97889207387",
+      "labels": [
+        "windows-latest"
+      ],
+      "runner_id": 1000000079,
+      "runner_name": "GitHub Actions 1000000079",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 97889207685,
+      "run_id": 32874537779,
+      "workflow_name": "Maximus CI Build",
+      "head_branch": "main",
+      "run_url": "https://api.github.com/repos/drfxai/Maximus-VPN/actions/runs/32874537779",
+      "run_attempt": 1,
+      "node_id": "CR_kwDORZuH5s8AAAAWyqbFhQ",
+      "head_sha": "16c540e8c6581c93c07dc73f585abd443a7ccb74",
+      "url": "https://api.github.com/repos/drfxai/Maximus-VPN/actions/jobs/97889207685",
+      "html_url": "https://github.com/drfxai/Maximus-VPN/actions/runs/32874537779/job/97889207685",
+      "status": "completed",
+      "conclusion": "failure",
+      "created_at": "2026-08-25T16:52:25Z",
+      "started_at": "2026-08-25T16:52:27Z",
+      "completed_at": "2026-08-25T16:56:48Z",
+      "name": "Android Debug + Release APK",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-08-25T16:52:28Z",
+          "completed_at": "2026-08-25T16:52:30Z"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-08-25T16:52:30Z",
+          "completed_at": "2026-08-25T16:52:32Z"
+        },
+        {
+          "name": "Run actions/setup-java@v5",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-08-25T16:52:32Z",
+          "completed_at": "2026-08-25T16:52:32Z"
+        },
+        {
+          "name": "Run gradle/actions/setup-gradle@v6",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-08-25T16:52:32Z",
+          "completed_at": "2026-08-25T16:52:48Z"
+        },
+        {
+          "name": "Download Xray-core Android arm64-v8a",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-08-25T16:52:48Z",
+          "completed_at": "2026-08-25T16:52:49Z"
+        },
+        {
+          "name": "Unit tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-08-25T16:52:49Z",
+          "completed_at": "2026-08-25T16:54:51Z"
+        },
+        {
+          "name": "Build APKs",
+          "status": "completed",
+          "conclusion": "failure",
+          "number": 7,
+          "started_at": "2026-08-25T16:54:51Z",
+          "completed_at": "2026-08-25T16:56:36Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v4",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 8,
+          "started_at": "2026-08-25T16:56:36Z",
+          "completed_at": "2026-08-25T16:56:36Z"
+        },
+        {
+          "name": "Post Run gradle/actions/setup-gradle@v6",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 14,
+          "started_at": "2026-08-25T16:56:36Z",
+          "completed_at": "2026-08-25T16:56:46Z"
+        },
+        {
+          "name": "Post Run actions/setup-java@v5",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 15,
+          "started_at": "2026-08-25T16:56:46Z",
+          "completed_at": "2026-08-25T16:56:46Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 16,
+          "started_at": "2026-08-25T16:56:46Z",
+          "completed_at": "2026-08-25T16:56:46Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 17,
+          "started_at": "2026-08-25T16:56:46Z",
+          "completed_at": "2026-08-25T16:56:46Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/drfxai/Maximus-VPN/check-runs/97889207685",
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "runner_id": 1000000080,
+      "runner_name": "GitHub Actions 1000000080",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 97889207711,
+      "run_id": 32874537779,
+      "workflow_name": "Maximus CI Build",
+      "head_branch": "main",
+      "run_url": "https://api.github.com/repos/drfxai/Maximus-VPN/actions/runs/32874537779",
+      "run_attempt": 1,
+      "node_id": "CR_kwDORZuH5s8AAAAWyqbFnw",
+      "head_sha": "16c540e8c6581c93c07dc73f585abd443a7ccb74",
+      "url": "https://api.github.com/repos/drfxai/Maximus-VPN/actions/jobs/97889207711",
+      "html_url": "https://github.com/drfxai/Maximus-VPN/actions/runs/32874537779/job/97889207711",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-08-25T16:52:25Z",
+      "started_at": "2026-08-25T16:52:27Z",
+      "completed_at": "2026-08-25T16:53:30Z",
+      "name": "Desktop Ubuntu x64 (compile check)",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-08-25T16:52:28Z",
+          "completed_at": "2026-08-25T16:52:29Z"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-08-25T16:52:29Z",
+          "completed_at": "2026-08-25T16:52:30Z"
+        },
+        {
+          "name": "Run actions/setup-java@v5",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-08-25T16:52:30Z",
+          "completed_at": "2026-08-25T16:52:30Z"
+        },
+        {
+          "name": "Run gradle/actions/setup-gradle@v6",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-08-25T16:52:30Z",
+          "completed_at": "2026-08-25T16:52:39Z"
+        },
+        {
+          "name": "Compile",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-08-25T16:52:39Z",
+          "completed_at": "2026-08-25T16:53:26Z"
+        },
+        {
+          "name": "Post Run gradle/actions/setup-gradle@v6",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-08-25T16:53:26Z",
+          "completed_at": "2026-08-25T16:53:29Z"
+        },
+        {
+          "name": "Post Run actions/setup-java@v5",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-08-25T16:53:29Z",
+          "completed_at": "2026-08-25T16:53:29Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10,
+          "started_at": "2026-08-25T16:53:29Z",
+          "completed_at": "2026-08-25T16:53:29Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11,
+          "started_at": "2026-08-25T16:53:29Z",
+          "completed_at": "2026-08-25T16:53:29Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/drfxai/Maximus-VPN/check-runs/97889207711",
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "runner_id": 1000000081,
+      "runner_name": "GitHub Actions 1000000081",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    }
+  ]
+}
