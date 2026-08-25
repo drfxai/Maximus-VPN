@@ -38,6 +38,9 @@ android {
       }
     }
     create("debugConfig") {
+      // debug.keystore is gitignored. CI generates it before building
+      // (see build.yml "Generate debug keystore"); locally it exists after
+      // a one-time keytool run documented in README.
       storeFile = file("${rootDir}/debug.keystore")
       storePassword = "android"
       keyAlias = "androiddebugkey"
