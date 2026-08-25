@@ -22,6 +22,10 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v6
+        with:
+          # Pin to match release.yml and local verification — unpinned pulls
+          # newer Gradle whose bundled Kotlin breaks the Compose compiler plugin.
+          gradle-version: '9.3.1'
       - name: Download Xray-core Android arm64-v8a
         shell: bash
         run: |
@@ -53,6 +57,10 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v6
+        with:
+          # Pin to match release.yml and local verification — unpinned pulls
+          # newer Gradle whose bundled Kotlin breaks the Compose compiler plugin.
+          gradle-version: '9.3.1'
       - name: Download Xray-core Windows x64
         shell: pwsh
         run: |
@@ -66,7 +74,9 @@ jobs:
       - name: Package EXE installer
         if: github.event_name != 'pull_request'
         working-directory: desktop
-        run: gradle packageExe -PappVersion=0.0.0-ci --no-daemon
+        # Quote the -P flag: PowerShell splits unquoted "0.0.0-ci" at the dot,
+        # so Gradle saw "-PappVersion=0" and tried to run task ".0.0-ci".
+        run: gradle packageExe "-PappVersion=0.0.0-ci" --no-daemon
       - uses: actions/upload-artifact@v4
         with:
           name: maximus-windows-exe
@@ -83,6 +93,10 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v6
+        with:
+          # Pin to match release.yml and local verification — unpinned pulls
+          # newer Gradle whose bundled Kotlin breaks the Compose compiler plugin.
+          gradle-version: '9.3.1'
       # Linux DEB packaging is validated by release.yml on tags; here we verify the
       # shared Kotlin sources compile for Linux (same JVM sources).
       - name: Compile
