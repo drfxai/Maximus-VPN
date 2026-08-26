@@ -12,8 +12,8 @@ android {
     applicationId = "com.drfxai.maximusvpn"
     minSdk = 24
     targetSdk = 36
-    versionCode = (providers.gradleProperty("versionCode").orNull?.toIntOrNull() ?: 252)
-    versionName = providers.gradleProperty("versionName").orElse("2.5.2").get()
+    versionCode = (providers.gradleProperty("versionCode").orNull?.toIntOrNull() ?: 253)
+    versionName = providers.gradleProperty("versionName").orElse("2.5.3").get()
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
