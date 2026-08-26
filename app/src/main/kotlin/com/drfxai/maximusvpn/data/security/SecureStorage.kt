@@ -56,17 +56,17 @@ class SecureStorage(context: Context) {
 
             val base64Encoded = Base64.encodeToString(combined, Base64.DEFAULT)
             prefs.edit().putString(key, base64Encoded).apply()
-        } catch (_: Exception) {
-            // Fallback to plain storage if keystore unavailable on virtual/test environment
-            prefs.edit().putString(key, "PLAIN:$value").apply()
+        } catch (e: Exception) {
+            // Never downgrade encrypted secrets to plaintext. Android Keystore is a
+            // security requirement for this storage class; surface the failure instead.
+            throw IllegalStateException("Android Keystore encryption failed", e)
         }
     }
 
     fun getAndDecrypt(key: String, defaultValue: String = ""): String {
         val stored = prefs.getString(key, null) ?: return defaultValue
-        if (stored.startsWith("PLAIN:")) {
-            return stored.removePrefix("PLAIN:")
-        }
+        // Legacy plaintext entries are intentionally no longer accepted.
+        if (stored.startsWith("PLAIN:")) return defaultValue
         return try {
             val combined = Base64.decode(stored, Base64.DEFAULT)
             if (combined.size < 12) return defaultValue
