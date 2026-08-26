@@ -15,67 +15,23 @@ jobs:
         with:
           ref: fix-settings-ui-and-xray-runtime
           fetch-depth: 0
-      - name: Repair SettingsScreen layout
+      - name: Remove nested About card from security toggles
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
           p = Path('app/src/main/kotlin/com/drfxai/maximusvpn/ui/settings/SettingsScreen.kt')
           s = p.read_text()
-          if 'import androidx.compose.ui.text.style.TextOverflow' not in s:
-              s = s.replace('import androidx.compose.ui.text.font.FontWeight\n','import androidx.compose.ui.text.font.FontWeight\nimport androidx.compose.ui.text.style.TextOverflow\n')
-          start = s.index('@Composable\nprivate fun SettingToggleItem(')
-          end = s.index('\nprivate fun getDnsLabel', start)
-          replacement = '''@Composable
-private fun SettingToggleItem(
-    icon: ImageVector,
-    title: String,
-    subtitle: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            modifier = Modifier
-                .size(36.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(AppTheme.colors.surfaceElevated)
-                .border(1.dp, AppTheme.colors.borderSubtle, RoundedCornerShape(8.dp)),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(icon, contentDescription = null, tint = AppTheme.colors.primary, modifier = Modifier.size(18.dp))
-        }
-        Spacer(modifier = Modifier.width(12.dp))
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .padding(end = 10.dp)
-        ) {
-            Text(title, color = AppTheme.colors.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(subtitle, color = AppTheme.colors.textSecondary, fontSize = 11.sp, lineHeight = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        }
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = AppTheme.colors.onPrimary,
-                checkedTrackColor = AppTheme.colors.primary,
-                uncheckedThumbColor = AppTheme.colors.textMuted,
-                uncheckedTrackColor = AppTheme.colors.surfaceElevated
-            )
-        )
-    }
-}
-'''
-          p.write_text(s[:start] + replacement + s[end:])
+          marker = '\n        Spacer(Modifier.height(16.dp))\n        Card(\n'
+          start = s.index(marker)
+          end = s.index('\n    }\n}\n\nprivate fun getDnsLabel', start)
+          s = s[:start] + '\n    }\n}\n\nprivate fun getDnsLabel' + s[end + len('\n    }\n}\n\nprivate fun getDnsLabel'):]
+          p.write_text(s)
           PY
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -- app/src/main/kotlin/com/drfxai/maximusvpn/ui/settings/SettingsScreen.kt
-          git commit -m "Repair Settings UI layout"
-          git push origin HEAD:fix-settings-ui-and-xray-runtime
+          if ! git diff --cached --quiet; then
+            git commit -m "Repair Settings UI layout"
+            git push origin HEAD:fix-settings-ui-and-xray-runtime
+          fi
