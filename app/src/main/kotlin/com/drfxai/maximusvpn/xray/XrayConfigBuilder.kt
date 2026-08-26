@@ -12,7 +12,7 @@ import org.json.JSONObject
 /**
  * Builds a real Xray-core configuration for the Android tun inbound.
  *
- * Flow: VpnService TUN fd -> [tun settings.fd] -> Xray tun inbound (gVisor stack)
+ * Flow: VpnService TUN fd -> XRAY_TUN_FD -> Xray TUN inbound (gVisor stack)
  *       -> routing rules -> protocol outbound (TLS/REALITY via Xray) -> server.
  *
  * UDP and DNS are handled inside Xray's userspace network stack — there are no
@@ -25,7 +25,8 @@ import org.json.JSONObject
 object XrayConfigBuilder {
 
     /**
-     * @param tunFd inherited fd number the core should attach to (from Os.dup in the engine).
+     * @param tunFd retained for call-site compatibility; Android passes it to the core via
+     *   the XRAY_TUN_FD environment variable, not as a JSON setting.
      * @param ipv4Address/inet4Prefix must match VpnService.Builder.addAddress.
      * @param ipv6Enabled when false, no IPv6 route/address is added AND queryStrategy stays
      *   IPv4-only — never add an IPv6 route Xray can't carry (black-hole).
@@ -80,12 +81,12 @@ object XrayConfigBuilder {
         val tunSettings = JSONObject().apply {
             put("mtu", settings.mtu)
             put("stack", "gvisor")
-            // Current cores accept the fd directly in settings; env vars remain set too.
-            put("fd", tunFd)
-            putJsonArrayCompat("inet4_address", "$ipv4Address/$inet4Prefix")
-            if (settings.ipv6Enabled) {
-                putJsonArrayCompat("inet6_address", "$ipv6Address/$inet6Prefix")
-            }
+            // Android/iOS Xray receives the TUN descriptor through XRAY_TUN_FD.
+            // Do not embed the descriptor in JSON: it is not a supported tun setting.
+            put("gateway", JSONArray().apply {
+                put("$ipv4Address/$inet4Prefix")
+                if (settings.ipv6Enabled) put("$ipv6Address/$inet6Prefix")
+            })
         }
         val tunInbound = JSONObject().apply {
             put("tag", "tun-in")
@@ -126,27 +127,31 @@ object XrayConfigBuilder {
                 rules.put(JSONObject().apply {
                     put("type", "field")
                     put("outboundTag", "direct")
-                    put("ip", JSONArray().apply {
-                        put("geoip:private")
-                    })
+                    put("ip", privateIpv4Ranges())
                 })
             }
             RoutingMode.BYPASS_SELECTED -> {
                 if (settings.customBypassRules.isNotBlank()) {
                     val domains = JSONArray()
+                    val ips = JSONArray()
                     settings.customBypassRules.split(",").map { it.trim() }
                         .filter { it.isNotBlank() }
-                        .forEach { domains.put(it) }
-                    rules.put(JSONObject().apply {
-                        put("type", "field")
-                        put("outboundTag", "direct")
-                        put("domain", domains)
-                    })
+                        .forEach { token ->
+                            if (isIpLiteral(token)) ips.put(token) else domains.put(token)
+                        }
+                    if (domains.length() > 0 || ips.length() > 0) {
+                        rules.put(JSONObject().apply {
+                            put("type", "field")
+                            put("outboundTag", "direct")
+                            if (domains.length() > 0) put("domain", domains)
+                            if (ips.length() > 0) put("ip", ips)
+                        })
+                    }
                 }
                 rules.put(JSONObject().apply {
                     put("type", "field")
                     put("outboundTag", "direct")
-                    put("ip", JSONArray().apply { put("geoip:private") })
+                    put("ip", privateIpv4Ranges())
                 })
             }
         }
@@ -256,6 +261,23 @@ object XrayConfigBuilder {
             })
             put("streamSettings", buildStreamSettings(profile))
         }
+    }
+
+    private fun privateIpv4Ranges(): JSONArray = JSONArray().apply {
+        put("10.0.0.0/8")
+        put("100.64.0.0/10")
+        put("127.0.0.0/8")
+        put("169.254.0.0/16")
+        put("172.16.0.0/12")
+        put("192.168.0.0/16")
+        put("198.18.0.0/15")
+    }
+
+    private fun isIpLiteral(value: String): Boolean {
+        val v = value.trim()
+        val ipv4 = v.matches(Regex("(?:\\d{1,3}\\.){3}\\d{1,3}(?:/\\d{1,2})?"))
+        val ipv6 = v.contains(":") && v.matches(Regex("[0-9A-Fa-f:.]+(?:/\\d{1,3})?"))
+        return ipv4 || ipv6
     }
 
     private fun JSONObject.putJsonArrayCompat(key: String, vararg values: String) {
