@@ -29,7 +29,7 @@ diagnostics, leak checks, and secure profile management included.
 
 ## Downloads
 
-Create a Git tag (e.g. `v1.0.0`) and push it — the release pipeline builds:
+Create a Git tag (e.g. `v2.5.3`) and push it — the Android release workflow builds only after production signing is configured and then verifies that the release certificate matches the known-good v2.5.1 certificate before publication.
 
 | Platform | Artifact |
 |---|---|
@@ -65,7 +65,7 @@ Android VpnService               Desktop VPN controller
 
 ```bash
 # Android (requires libxray.so in app/src/main/jniLibs/arm64-v8a/)
-gradle :app:assembleRelease -PversionName=1.0.0 -PversionCode=1
+gradle :app:assembleRelease -PversionName=2.5.3 -PversionCode=253
 
 # Desktop (Windows: also place xray.exe in desktop/src/main/resources/xray/)
 cd desktop && gradle packageDistributionForCurrentOS -PappVersion=1.0.0
@@ -73,5 +73,5 @@ cd desktop && gradle packageDistributionForCurrentOS -PappVersion=1.0.0
 
 ### Android signing
 
-Configure CI secrets `KEYSTORE_PATH`, `STORE_PASSWORD`, `KEY_PASSWORD` for production-signed releases.
-Without them, unsigned release artifacts are produced.
+Configure CI secrets `KEYSTORE_PATH`, `STORE_PASSWORD`, `KEY_PASSWORD` using the existing v2.5.1 production signing key.
+Release packaging now fails closed when signing is unavailable; unsigned release APKs are never published.
