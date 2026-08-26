@@ -269,35 +269,38 @@ object VlessParser {
         return try {
             val b64 = uri.removePrefix("vmess://").removePrefix("VMESS://").trim()
             val json = JSONObject(String(Base64.getUrlDecoder().decode(padBase64(b64))))
-            
-            // Safe extraction helpers that work in unit tests (org.json not mocked)
-            fun optString(key: String, default: String = "") = try { json.optString(key, default) } catch (_: Exception) { default }
-            fun optInt(key: String, default: Int = 0) = try { 
-                val v = json.opt(key) 
-                if (v is Int) v else if (v is String) v.toIntOrNull() ?: default else default
-            } catch (_: Exception) { default }
-            fun optBoolean(key: String, default: Boolean = false) = try { 
-                val v = json.opt(key) 
-                if (v is Boolean) v else if (v is Int) v == 1 else if (v is String) v.toBoolean() else default
-            } catch (_: Exception) { default }
+
+            // handle VMess JSON quirks: port/aid sometimes appear as strings
+            val rawPort = json.opt("port")
+            val port = when (rawPort) {
+                is Number -> rawPort.toInt()
+                is String -> rawPort.toIntOrNull() ?: 0
+                else -> 0
+            }
+            val rawAid = json.opt("aid")
+            val alterId = when (rawAid) {
+                is Number -> rawAid.toInt()
+                is String -> rawAid.toIntOrNull() ?: 0
+                else -> 0
+            }
 
             val profile = VlessProfile(
-                name = optString("ps").ifBlank { "VMess Server" },
-                address = optString("add"),
-                port = optInt("port"),
-                uuid = optString("id"),
-                encryption = optString("scy").ifBlank { "auto" },
-                transport = optString("net", "tcp").lowercase(),
-                security = optString("tls").let { if (it == "tls" || it == "reality") it else "none" },
-                sni = optString("sni"),
-                host = optString("host"),
-                path = optString("path", "/"),
-                serviceName = optString("path").takeIf { optString("net") == "grpc" } ?: "",
-                alpn = optString("alpn"),
-                fingerprint = optString("fp"),
+                name = json.optString("ps", "").ifBlank { "VMess Server" },
+                address = json.optString("add", ""),
+                port = port,
+                uuid = json.optString("id", ""),
+                encryption = json.optString("scy", "auto").ifBlank { "auto" },
+                transport = json.optString("net", "tcp").lowercase(),
+                security = json.optString("tls", "").let { if (it == "tls" || it == "reality") it else "none" },
+                sni = json.optString("sni", ""),
+                host = json.optString("host", ""),
+                path = json.optString("path", "/"),
+                serviceName = json.optString("path", "").takeIf { json.optString("net") == "grpc" } ?: "",
+                alpn = json.optString("alpn", ""),
+                fingerprint = json.optString("fp", ""),
                 protocol = VpnProtocol.VMESS.name,
-                alterId = optInt("aid"),
-                allowInsecure = optBoolean("allowInsecure")
+                alterId = alterId,
+                allowInsecure = json.optString("allowInsecure", "0") == "1"
             )
             VlessValidator.validate(profile)
             AppResult.Success(profile)
