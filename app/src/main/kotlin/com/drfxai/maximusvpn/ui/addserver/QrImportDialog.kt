@@ -58,8 +58,38 @@ fun QrImportDialog(
         },
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
+                // Live camera scanner — decodes and fills the text field
+                var showCamera by remember { mutableStateOf(false) }
+                if (showCamera) {
+                    com.drfxai.maximusvpn.ui.qr.QrCameraScanner(
+                        modifier = Modifier.fillMaxWidth(),
+                        onQrScanned = { payload ->
+                            inputText = payload
+                            showCamera = false
+                            val singleRes = VlessParser.parse(payload.trim())
+                            if (singleRes is AppResult.Success) {
+                                onImportSuccess(singleRes.data)
+                                onDismiss()
+                            }
+                        },
+                        onError = { /* surfaced via input field; non-fatal */ }
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+                Button(
+                    onClick = { showCamera = !showCamera },
+                    colors = ButtonDefaults.buttonColors(containerColor = AppTheme.colors.surfaceElevated),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.QrCode, contentDescription = null, tint = AppTheme.colors.primary, modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(if (showCamera) "Hide camera" else "Scan QR with camera", color = AppTheme.colors.primary, fontSize = 11.sp)
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
                 Text(
-                    text = "Paste a QR code payload, subscription text, or multiple line-separated VLESS URIs:",
+                    text = "Or paste a QR code payload, subscription text, or multiple line-separated VLESS URIs:",
                     color = AppTheme.colors.textSecondary,
                     fontSize = 13.sp
                 )

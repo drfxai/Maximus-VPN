@@ -11,6 +11,9 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
 
+    <!-- QR import: camera is used only while the scan dialog is open -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
     <application
         android:name=".MaximusApplication"
         android:allowBackup="false"

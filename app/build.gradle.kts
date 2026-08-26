@@ -101,6 +101,13 @@ dependencies {
   implementation(libs.kotlinx.coroutines.core)
   implementation(libs.kotlinx.serialization.json)
   implementation(libs.okhttp)
+  // QR scanning: ZXing core for decoding (camera via CameraX already in deps)
+  implementation(libs.zxing.core)
+  // QR scanner live preview
+  implementation(libs.androidx.camera.core)
+  implementation(libs.androidx.camera.camera2)
+  implementation(libs.androidx.camera.lifecycle)
+  implementation(libs.androidx.camera.view)
 
   testImplementation(libs.androidx.core)
   testImplementation(libs.junit)
