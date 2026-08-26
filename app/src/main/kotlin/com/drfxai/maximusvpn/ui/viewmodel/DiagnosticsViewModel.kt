@@ -3,6 +3,7 @@ package com.drfxai.maximusvpn.ui.viewmodel
 import androidx.lifecycle.ViewModel
 import kotlinx.coroutines.flow.asStateFlow
 import androidx.lifecycle.viewModelScope
+import com.drfxai.maximusvpn.BuildConfig
 import com.drfxai.maximusvpn.MaximusApplication
 import com.drfxai.maximusvpn.core.NetworkDiagnostics
 import com.drfxai.maximusvpn.core.SecretRedactor
@@ -77,7 +78,7 @@ class DiagnosticsViewModel(
                 // 2. DNS leak heuristic: can we reach the configured Do53 resolver directly?
                 val settings = settingsRepository.getSettings()
                 _dnsLeakSuspected.value = try {
-                    val addr = java.net.InetAddress.getByName(settings.dnsServer)
+                    java.net.InetAddress.getByName(settings.dnsServer)
                     false // resolver reachable; deep leak testing requires in-tunnel probes
                 } catch (_: Exception) {
                     null // inconclusive rather than falsely reassuring
@@ -148,7 +149,7 @@ class DiagnosticsViewModel(
         }
 
         return DiagnosticReport(
-            appVersion = "Maximus v2.0.0 (by DrFXAi)",
+            appVersion = "Maximus v${BuildConfig.VERSION_NAME} (by DrFXAi)",
             vpnServiceRunning = conn.status == ConnectionStatus.CONNECTED,
             xrayCoreRunning = xrayEngine.isRunning(),
             activeServerSummary = profileSummary,
