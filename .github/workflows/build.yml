@@ -23,8 +23,6 @@ jobs:
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v6
         with:
-          # Pin to match release.yml and local verification — unpinned pulls
-          # newer Gradle whose bundled Kotlin breaks the Compose compiler plugin.
           gradle-version: '9.3.1'
       - name: Download Xray-core Android arm64-v8a
         shell: bash
@@ -34,7 +32,6 @@ jobs:
           unzip -o xray-android.zip -d xray-android-unpacked
           cp "$(find xray-android-unpacked -name xray | head -1)" app/src/main/jniLibs/arm64-v8a/libxray.so
       - name: Generate debug keystore
-        # debug.keystore is gitignored; create it fresh for debug-build signing.
         run: |
           keytool -genkeypair -keystore debug.keystore -alias androiddebugkey \
             -keyalg RSA -keysize 2048 -validity 10000 \
@@ -42,17 +39,24 @@ jobs:
             -dname "CN=Android Debug,O=Android,C=US"
       - name: Unit tests
         run: gradle :app:testDebugUnitTest --no-daemon
-      - name: Build APKs
+      - name: Build debug APK
+        run: gradle :app:assembleDebug --no-daemon
+      - name: Build signed release APK when production signing is available
+        if: ${{ github.event_name != 'pull_request' && env.KEYSTORE_PATH != '' && env.STORE_PASSWORD != '' && env.KEY_PASSWORD != '' }}
         env:
           KEYSTORE_PATH: ${{ secrets.KEYSTORE_PATH }}
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          gradle :app:assembleDebug :app:assembleRelease --no-daemon
+        run: gradle :app:assembleRelease --no-daemon
       - uses: actions/upload-artifact@v4
         with:
-          name: maximus-android-apks
-          path: app/build/outputs/apk/*/release/*.apk
+          name: maximus-android-debug
+          path: app/build/outputs/apk/debug/*.apk
+      - uses: actions/upload-artifact@v4
+        if: ${{ github.event_name != 'pull_request' && env.KEYSTORE_PATH != '' && env.STORE_PASSWORD != '' && env.KEY_PASSWORD != '' }}
+        with:
+          name: maximus-android-release
+          path: app/build/outputs/apk/release/*.apk
 
   windows-desktop:
     name: Desktop Windows x64
@@ -65,8 +69,6 @@ jobs:
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v6
         with:
-          # Pin to match release.yml and local verification — unpinned pulls
-          # newer Gradle whose bundled Kotlin breaks the Compose compiler plugin.
           gradle-version: '9.3.1'
       - name: Download Xray-core Windows x64
         shell: pwsh
@@ -94,8 +96,6 @@ jobs:
       - name: Package EXE installer
         if: github.event_name != 'pull_request'
         working-directory: desktop
-        # Quote the -P flag: PowerShell splits unquoted "0.0.0-ci" at the dot,
-        # so Gradle saw "-PappVersion=0" and tried to run task ".0.0-ci".
         run: gradle packageExe "-PappVersion=0.0.0-ci" --no-daemon
       - uses: actions/upload-artifact@v4
         with:
@@ -114,11 +114,7 @@ jobs:
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v6
         with:
-          # Pin to match release.yml and local verification — unpinned pulls
-          # newer Gradle whose bundled Kotlin breaks the Compose compiler plugin.
           gradle-version: '9.3.1'
-      # Linux DEB packaging is validated by release.yml on tags; here we verify the
-      # shared Kotlin sources compile for Linux (same JVM sources).
       - name: Compile
         working-directory: desktop
         run: gradle compileKotlin --no-daemon
