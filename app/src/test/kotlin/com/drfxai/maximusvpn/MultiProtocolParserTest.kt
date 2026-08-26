@@ -101,7 +101,7 @@ class MultiProtocolParserTest {
     fun parseBatch_multiProtocol_extractsValidProfiles() {
         val batchText = """
             vless://11111111-2222-3333-4444-555555555555@node1.com:443?security=tls#VLESS
-            vmess://eyJ2IjoiMiIsInBzIjoiVk1lc3MiLCJhZGQiOiJub2RlMi5jb20iLCJwb3J0IjoiODA4MCIsImlkIjoiYWFiYmNjZGQtZWVmZi00YWFiLWI4Y2MtZGRlZWYwMDAwMDAwMCIsImFpZCI6IjAiLCJzY3kiOiJhdXRvIiwibmV0IjoidGNwIiwidGxzIjoidGxzIn0=
+            vmess://eyJ2IjoiMiIsInBzIjoiVk1lc3MiLCJhZGQiOiJub2RlMi5jb20iLCJwb3J0IjoiODA4MCIsImlkIjoiYWFiYmNjZGQtZWVmZi00YWFiLWI4Y2MtZGRlZWYwMDAwMDAwMCIsImFpZCI6IjAiLCJzY3kiOiJhdXRvIiwibmV0IjoidGNwIiwidGxzIjoiIn0=
             trojan://pwd@node3.com:443?sni=test.com#Trojan
             ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ=@node4.com:8388#SS
             hysteria2://pass@node5.com:443?sni=test.com#Hy2
