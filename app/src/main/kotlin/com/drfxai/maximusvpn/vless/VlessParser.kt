@@ -179,11 +179,9 @@ object VlessParser {
                 shortId = params["sid"] ?: params["shortId"] ?: params["short_id"] ?: "",
                 spiderX = params["spx"] ?: params["spiderX"] ?: "",
                 alpn = params["alpn"] ?: "",
-                headerType = params["headerType"] ?: "",
+                headerType = if (obfsPassword.isNotBlank()) "salamander" else (params["headerType"] ?: ""),
                 protocol = protocol.name,
                 allowInsecure = params["allowInsecure"] == "1" || params["insecure"] == "1",
-                // Hysteria2 obfs rides in headerType as a "salamander" marker
-                headerType = if (obfsPassword.isNotBlank()) "salamander" else headerType,
                 obfsPassword = obfsPassword
             )
 

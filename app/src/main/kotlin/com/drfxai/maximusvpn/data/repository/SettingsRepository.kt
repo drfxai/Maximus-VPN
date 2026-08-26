@@ -99,6 +99,9 @@ class SettingsRepository(context: Context) {
     fun setThemeMode(mode: ThemeMode) =
         updateSettings(_settingsFlow.value.copy(themeMode = mode))
 
+    fun setSplitTunnelMode(mode: SplitTunnelMode) =
+        updateSettings(_settingsFlow.value.copy(splitTunnelMode = mode))
+
     /** Legacy helper kept for callers still toggling dark mode. */
     fun setDarkTheme(darkTheme: Boolean) = setThemeMode(if (darkTheme) ThemeMode.DARK else ThemeMode.LIGHT)
 

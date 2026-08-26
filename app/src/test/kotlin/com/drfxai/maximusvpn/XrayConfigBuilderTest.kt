@@ -37,7 +37,7 @@ class XrayConfigBuilderTest {
 
     @Test
     fun buildTunConfig_generatesValidXrayStructure() {
-        val json = JSONObject(XrayConfigBuilder.buildTunConfig(realityProfile(), settings()))
+        val json = JSONObject(XrayConfigBuilder.buildTunConfig(realityProfile(), settings(), tunFd = 0))
 
         assertTrue(json.has("inbounds"))
         assertTrue(json.has("outbounds"))
@@ -53,7 +53,7 @@ class XrayConfigBuilderTest {
 
     @Test
     fun buildTunConfig_realityOutbound_hasRealitySettingsAndVisionFlow() {
-        val json = JSONObject(XrayConfigBuilder.buildTunConfig(realityProfile(), settings()))
+        val json = JSONObject(XrayConfigBuilder.buildTunConfig(realityProfile(), settings(), tunFd = 0))
         val outbounds = json.getJSONArray("outbounds")
         var proxy: JSONObject? = null
         for (i in 0 until outbounds.length()) {
@@ -78,7 +78,7 @@ class XrayConfigBuilderTest {
 
     @Test
     fun buildTunConfig_defaultRouteIsProxy_failClosed() {
-        val json = JSONObject(XrayConfigBuilder.buildTunConfig(realityProfile(), settings()))
+        val json = JSONObject(XrayConfigBuilder.buildTunConfig(realityProfile(), settings(), tunFd = 0))
         val rules = json.getJSONObject("routing").getJSONArray("rules")
         val lastRule = rules.getJSONObject(rules.length() - 1)
         assertEquals("proxy", lastRule.getString("outboundTag"))
@@ -94,7 +94,7 @@ class XrayConfigBuilderTest {
             host = "cdn.example.com",
             flow = ""
         )
-        val json = JSONObject(XrayConfigBuilder.buildTunConfig(profile, settings()))
+        val json = JSONObject(XrayConfigBuilder.buildTunConfig(profile, settings(), tunFd = 0))
         val outbounds = json.getJSONArray("outbounds")
         for (i in 0 until outbounds.length()) {
             val o = outbounds.getJSONObject(i)
