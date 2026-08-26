@@ -116,7 +116,16 @@ class MaximusVpnService : VpnService() {
             }
             ACTION_RECONNECT -> {
                 serviceScope.launch {
-                    activeProfile?.let { connect(it) }
+                    // Prefer the remembered profile — activeProfile is cleared after disconnect.
+                    val target = activeProfile
+                        ?: settingsRepository.getSettings().selectedProfileId?.let {
+                            serverRepository.getProfileById(it)
+                        }
+                    if (target != null) connect(target)
+                    else updateState(_vpnState.value.copy(
+                        status = ConnectionStatus.FAILED,
+                        errorMessage = "Nothing to reconnect to."
+                    ))
                 }
             }
         }
@@ -164,12 +173,19 @@ class MaximusVpnService : VpnService() {
                 XrayLogManager.appendLog("Disallow package notice: ${e.message}", "TUNNEL")
             }
 
-            // Kill switch: when enabled, block ALL traffic while the tunnel is down
-            // (Android enforces this at the system level via lockdown mode).
+            // Kill switch: setBlocking(true) is API 29+; on API 24–28 it is NOT available —
+            // the Settings screen documents that Always-on VPN (system) covers those.
             val killSwitchRequested = settings.killSwitchEnabled
             if (killSwitchRequested) {
-                try { builder.setBlocking(true) } catch (e: Exception) {
-                    XrayLogManager.appendLog("setBlocking unavailable: ${e.message}", "SECURITY")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    try { builder.setBlocking(true) } catch (e: Exception) {
+                        XrayLogManager.appendLog("setBlocking unavailable: ${e.message}", "SECURITY")
+                    }
+                } else {
+                    XrayLogManager.appendLog(
+                        "Kill switch requested but setBlocking requires Android 10+. " +
+                            "Enable Always-on VPN in system settings for full coverage.", "SECURITY"
+                    )
                 }
             }
 
@@ -318,6 +334,20 @@ class MaximusVpnService : VpnService() {
         networkCallback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 XrayLogManager.appendLog("Underlying network available.", "NETWORK")
+                // Real reconnect: when enabled and the tunnel dropped with the network,
+                // bring it back up against the remembered profile.
+                serviceScope.launch {
+                    val settings = settingsRepository.getSettings()
+                    if (settings.autoReconnect &&
+                        _vpnState.value.status == ConnectionStatus.RECONNECTING
+                    ) {
+                        val target = _vpnState.value.activeProfile
+                            ?: settings.selectedProfileId?.let {
+                                serverRepository.getProfileById(it)
+                            }
+                        if (target != null) connect(target)
+                    }
+                }
             }
 
             override fun onLost(network: Network) {

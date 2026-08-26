@@ -32,11 +32,17 @@ class DiagnosticsViewModel(
     private val _possibleLeak = kotlinx.coroutines.flow.MutableStateFlow<Boolean?>(null)
     val possibleLeak: kotlinx.coroutines.flow.StateFlow<Boolean?> = _possibleLeak
 
-    /** Run a public-IP check through the current network path. */
+    /** Run a public-IP check through the current network path and set possibleLeak honestly. */
     fun checkPublicIp() {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             val result = com.drfxai.maximusvpn.core.NetworkDiagnostics.fetchPublicIp()
             _publicIp.value = result?.ip
+            // Leak detection is only meaningful while CONNECTED. NOTE: our app UID is
+            // excluded from the TUN (addDisallowedApplication) so this socket rides the
+            // physical network — the observed IP here is the ISP, NOT proof of a leak.
+            // A true leak test must run through the tunnel (e.g. via Xray's local inbound).
+            val connected = connectionState.value.isConnected
+            _possibleLeak.value = if (connected && result == null) true else null
         }
     }
 
