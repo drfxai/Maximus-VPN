@@ -18,15 +18,12 @@ android {
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
     ndk {
-      // Xray-core (gomobile) native library architectures shipped in the APK
       abiFilters += listOf("arm64-v8a")
     }
   }
 
   signingConfigs {
     create("release") {
-      // Only configure when a real keystore is provided (CI secrets or local env).
-      // Empty/missing env must not crash configuration — release falls back to unsigned.
       val keystorePath = System.getenv("KEYSTORE_PATH").orEmpty().trim()
       val storePass = System.getenv("STORE_PASSWORD").orEmpty().trim()
       val keyPass = System.getenv("KEY_PASSWORD").orEmpty().trim()
@@ -38,9 +35,6 @@ android {
       }
     }
     create("debugConfig") {
-      // debug.keystore is gitignored. CI generates it before building
-      // (see build.yml "Generate debug keystore"); locally it exists after
-      // a one-time keytool run documented in README.
       storeFile = file("${rootDir}/debug.keystore")
       storePassword = "android"
       keyAlias = "androiddebugkey"
@@ -51,9 +45,6 @@ android {
   buildTypes {
     release {
       isCrunchPngs = false
-      // v2.0: R8 enabled with resource shrinking. Keep rules in proguard-rules.pro
-      // preserve Xray config JSON field names (via org.json usage — reflective-safe)
-      // and gomobile JNI surface.
       isMinifyEnabled = true
       isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
@@ -66,6 +57,7 @@ android {
     }
     debug { signingConfig = signingConfigs.getByName("debugConfig") }
   }
+
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_11
     targetCompatibility = JavaVersion.VERSION_11
@@ -80,8 +72,27 @@ android {
     includeInBundle = true
   }
   packaging {
-    // libxray.so is a large gomobile library; keep default compression off for it
     jniLibs.useLegacyPackaging = true
+  }
+}
+
+// Never allow a production release artifact to be emitted unsigned.
+// Debug/test builds remain usable without production signing credentials.
+gradle.taskGraph.whenReady {
+  val releaseRequested = allTasks.any { task ->
+    task.name.contains("Release", ignoreCase = true) &&
+      task.name.matches(Regex("(assemble|bundle|package|sign|validate).*", RegexOption.IGNORE_CASE))
+  }
+  if (releaseRequested) {
+    val keystorePath = System.getenv("KEYSTORE_PATH").orEmpty().trim()
+    val storePass = System.getenv("STORE_PASSWORD").orEmpty().trim()
+    val keyPass = System.getenv("KEY_PASSWORD").orEmpty().trim()
+    require(keystorePath.isNotEmpty() && storePass.isNotEmpty() && keyPass.isNotEmpty()) {
+      "Production Android release signing is not configured. Set KEYSTORE_PATH, STORE_PASSWORD, and KEY_PASSWORD before building a release APK/AAB."
+    }
+    require(file(keystorePath).isFile) {
+      "Production Android signing keystore not found at KEYSTORE_PATH. Refusing to create an unsigned release artifact."
+    }
   }
 }
 
@@ -106,9 +117,7 @@ dependencies {
   implementation(libs.kotlinx.serialization.json)
   implementation(libs.okhttp)
   implementation(libs.androidx.work.runtime)
-  // QR scanning: ZXing core for decoding (camera via CameraX already in deps)
   implementation(libs.zxing.core)
-  // QR scanner live preview
   implementation(libs.androidx.camera.core)
   implementation(libs.androidx.camera.camera2)
   implementation(libs.androidx.camera.lifecycle)
