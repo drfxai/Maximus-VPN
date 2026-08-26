@@ -1,7 +1,6 @@
 package com.drfxai.maximusvpn.xray
 
 import android.content.Context
-import android.os.Build
 import android.system.Os
 import android.system.OsConstants
 import com.drfxai.maximusvpn.core.AppResult
@@ -58,6 +57,7 @@ class XrayCoreEngine private constructor(private val appContext: Context) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var logJob: Job? = null
     private var statsJob: Job? = null
+    private var watchdogJob: Job? = null
 
     private val txBytesCounter = java.util.concurrent.atomic.AtomicLong(0)
     private val rxBytesCounter = java.util.concurrent.atomic.AtomicLong(0)
@@ -112,13 +112,10 @@ class XrayCoreEngine private constructor(private val appContext: Context) {
             field.getInt(fdObj)
         } catch (_: Exception) { null }
 
-    /** Asset dir next to the binary holding geoip.dat / geosite.dat. */
-    private fun assetDir(): File = ensureBinary().parentFile ?: appContext.filesDir
+    /** Writable runtime directory holding config.json and optional geo data. */
+    private fun assetDir(): File = File(appContext.filesDir, "xray-runtime").apply { mkdirs() }
 
-    /**
-     * Extract geoip.dat / geosite.dat from assets into the asset dir so routing
-     * rules like geoip:private work offline. Idempotent; overwrites stale copies.
-     */
+    /** Copy optional Xray geo assets into a writable runtime directory. */
     @Synchronized
     fun ensureGeoAssets(): File {
         val dir = assetDir().apply { mkdirs() }
@@ -139,8 +136,10 @@ class XrayCoreEngine private constructor(private val appContext: Context) {
      * Start Xray-core with the given JSON config attached to the VpnService TUN fd.
      * Blocks until the process is spawned; Error on missing binary or immediate exit.
      */
-    fun start(configJson: String, tunFd: Int): AppResult<Unit> {
+    fun start(configJson: String, tunFd: Int, onUnexpectedExit: (() -> Unit)? = null): AppResult<Unit> {
         stop()
+        txBytesCounter.set(0)
+        rxBytesCounter.set(0)
         return try {
             val binary = ensureBinary()
             val assetDir = ensureGeoAssets()
@@ -151,56 +150,69 @@ class XrayCoreEngine private constructor(private val appContext: Context) {
             // dup() gives a NEW fd we own; clearing FD_CLOEXEC on the dup makes it
             // survive exec*() in the child. The original pfd keeps its own CLOEXEC.
             val inheritedFd = Os.dup(makeFileDescriptor(tunFd))
-            // The dup'd descriptor's number is what we hand to the child via env.
-            val childFdNum = reflectDescriptorNumber(inheritedFd)
-                ?: throw IllegalStateException("Cannot read duplicated fd number")
-            val flags = Os.fcntlInt(inheritedFd, OsConstants.F_GETFD, 0)
-            Os.fcntlInt(inheritedFd, OsConstants.F_SETFD, flags and OsConstants.FD_CLOEXEC.inv())
+            try {
+                // The dup'd descriptor's number is what we hand to the child via env.
+                val childFdNum = reflectDescriptorNumber(inheritedFd)
+                    ?: throw IllegalStateException("Cannot read duplicated fd number")
+                val flags = Os.fcntlInt(inheritedFd, OsConstants.F_GETFD, 0)
+                Os.fcntlInt(inheritedFd, OsConstants.F_SETFD, flags and OsConstants.FD_CLOEXEC.inv())
 
-            XrayLogManager.appendLog("Starting $XRAY_VERSION", "XRAY")
-            XrayLogManager.appendLog("TUN fd=$tunFd duplicated as $childFdNum (CLOEXEC cleared)", "XRAY")
+                XrayLogManager.appendLog("Starting $XRAY_VERSION", "XRAY")
+                XrayLogManager.appendLog("TUN fd=$tunFd duplicated as $childFdNum (CLOEXEC cleared)", "XRAY")
 
-            val pb = ProcessBuilder(binary.absolutePath, "run", "-c", cfg.absolutePath)
-                .redirectErrorStream(true)
-                .directory(assetDir)
-            pb.environment()[ENV_TUN_FD_LEGACY] = childFdNum.toString()
-            pb.environment()[ENV_TUN_FD] = childFdNum.toString()
-            pb.environment()["XRAY_LOCATION_ASSET"] = assetDir.absolutePath
+                val pb = ProcessBuilder(binary.absolutePath, "run", "-c", cfg.absolutePath)
+                    .redirectErrorStream(true)
+                    .directory(assetDir)
+                pb.environment()[ENV_TUN_FD_LEGACY] = childFdNum.toString()
+                pb.environment()[ENV_TUN_FD] = childFdNum.toString()
+                pb.environment()["XRAY_LOCATION_ASSET"] = assetDir.absolutePath
 
-            val proc = pb.start()
-            process = proc
+                val proc = pb.start()
+                process = proc
 
-            // Close OUR handle on the dup now that the child holds its inheritance;
-            // the ParcelFileDescriptor still owns the original fd.
-            try { Os.close(inheritedFd) } catch (_: Exception) {}
-
-            // Watchdog: detect immediate exit (bad config, unsupported flag...)
-            Thread.sleep(600)
-            if (!proc.isAlive) {
-                val tail = proc.inputStream.bufferedReader().readText().takeLast(500)
-                XrayLogManager.appendLog(
-                    "Xray exited immediately (code ${proc.exitValue()}): $tail", "ERROR"
-                )
-                return AppResult.Error(
-                    com.drfxai.maximusvpn.core.VpnException.ConfigurationError(
-                        "Xray-core failed to start (exit ${proc.exitValue()}): " +
-                            tail.lineSequence().lastOrNull().orEmpty()
-                    ),
-                    "Xray-core failed to start. Check server settings and try again."
-                )
-            }
-            isRunningFlag.set(true)
-
-            logJob = scope.launch {
-                proc.inputStream.bufferedReader().forEachLine { line ->
-                    XrayLogManager.appendLog(line.take(400), "XRAY")
+                // Watchdog: detect immediate exit (bad config, unsupported flag...)
+                Thread.sleep(600)
+                if (!proc.isAlive) {
+                    val tail = proc.inputStream.bufferedReader().readText().takeLast(500)
+                    XrayLogManager.appendLog(
+                        "Xray exited immediately (code ${proc.exitValue()}): $tail", "ERROR"
+                    )
+                    return AppResult.Error(
+                        com.drfxai.maximusvpn.core.VpnException.ConfigurationError(
+                            "Xray-core failed to start (exit ${proc.exitValue()}): " +
+                                tail.lineSequence().lastOrNull().orEmpty()
+                        ),
+                        "Xray-core failed to start. Check server settings and try again."
+                    )
                 }
+                isRunningFlag.set(true)
+
+                logJob = scope.launch {
+                    proc.inputStream.bufferedReader().forEachLine { line ->
+                        XrayLogManager.appendLog(line.take(400), "XRAY")
+                    }
+                }
+
+                watchdogJob = scope.launch(Dispatchers.IO) {
+                    val exitCode = proc.waitFor()
+                    val unexpected = isRunningFlag.compareAndSet(true, false)
+                    if (unexpected) {
+                        XrayLogManager.appendLog(
+                            "Xray-core exited unexpectedly (code $exitCode). VPN must be torn down.",
+                            "ERROR"
+                        )
+                        onUnexpectedExit?.invoke()
+                    }
+                }
+
+                startStatsSampler()
+
+                XrayLogManager.appendLog("Xray-core process running.", "VPN")
+                AppResult.Success(Unit)
+            } finally {
+                // The child inherits this dup after CLOEXEC is cleared; close our copy.
+                try { Os.close(inheritedFd) } catch (_: Exception) {}
             }
-
-            startStatsSampler()
-
-            XrayLogManager.appendLog("Xray-core process running.", "VPN")
-            AppResult.Success(Unit)
         } catch (e: Exception) {
             XrayLogManager.appendLog("Failed to start Xray-core: ${e.message}", "ERROR")
             AppResult.Error(
@@ -260,6 +272,7 @@ class XrayCoreEngine private constructor(private val appContext: Context) {
         isRunningFlag.set(false)
         logJob?.cancel(); logJob = null
         statsJob?.cancel(); statsJob = null
+        watchdogJob?.cancel(); watchdogJob = null
         try {
             process?.destroy()
             Thread.sleep(200)
