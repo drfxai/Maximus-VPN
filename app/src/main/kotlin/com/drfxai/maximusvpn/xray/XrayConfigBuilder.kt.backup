@@ -229,7 +229,7 @@ object XrayConfigBuilder {
             "ws" -> stream.put("wsSettings", JSONObject().apply {
                 put("path", profile.path.ifBlank { "/" })
                 if (profile.host.isNotBlank()) {
-                    put("headers", JSONObject().apply { if (profile.host.isNotBlank()) put("Host", profile.host) })
+                    put("headers", JSONObject().apply { if (profile.host.isNotBlank()) put("Host", profile.host) }
                 }
             })
             "grpc" -> stream.put("grpcSettings", JSONObject().apply {

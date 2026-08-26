@@ -6,7 +6,6 @@ import com.drfxai.maximusvpn.data.model.VlessProfile
 import com.drfxai.maximusvpn.xray.XrayConfigBuilder
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -38,8 +37,7 @@ class XrayConfigBuilderTest {
 
     @Test
     fun buildTunConfig_generatesValidXrayStructure() {
-        val tunFd = 0
-        val json = JSONObject(XrayConfigBuilder.buildTunConfig(realityProfile(), settings(), tunFd))
+        val json = JSONObject(XrayConfigBuilder.buildTunConfig(realityProfile(), settings(), tunFd = 0))
 
         assertTrue(json.has("inbounds"))
         assertTrue(json.has("outbounds"))
@@ -52,22 +50,18 @@ class XrayConfigBuilderTest {
         assertEquals("tun", inbound.getString("protocol"))
         assertEquals("tun-in", inbound.getString("tag"))
         val tunSettings = inbound.getJSONObject("settings")
-        assertEquals(tunFd, tunSettings.getInt("fd")) // FD passed via fd field
-        val ipv4Array = tunSettings.getJSONArray("inet4_address")
-        assertEquals("172.19.0.1/30", ipv4Array.getString(0))
-        val ipv6Array = tunSettings.getJSONArray("inet6_address")
-        assertEquals("fdfe:dcba:9876::1/126", ipv6Array.getString(0))
+        val gateway = tunSettings.getJSONArray("gateway")
+        assertEquals("172.19.0.1/30", gateway.getString(0))
+        assertEquals("fdfe:dcba:9876::1/126", gateway.getString(1))
     }
 
     @Test
     fun buildTunConfig_androidTunFdIsPassedByEnvironmentNotJson() {
-        val tunFd = 1234
-        val json = JSONObject(XrayConfigBuilder.buildTunConfig(realityProfile(), settings(), tunFd))
+        val json = JSONObject(XrayConfigBuilder.buildTunConfig(realityProfile(), settings(), tunFd = 1234))
         val tunSettings = json.getJSONArray("inbounds").getJSONObject(0).getJSONObject("settings")
-        assertTrue(tunSettings.has("fd")) // FD is in JSON as 'fd'
-        assertEquals(tunFd, tunSettings.getInt("fd"))
-        // legacy 'gateway' field must NOT be present
-        assertFalse(tunSettings.has("gateway"))
+        assertFalse(tunSettings.has("fd"))
+        assertFalse(tunSettings.has("inet4_address"))
+        assertFalse(tunSettings.has("inet6_address"))
     }
 
     @Test
@@ -152,5 +146,8 @@ class XrayConfigBuilderTest {
 
     private fun assertNotNull(x: JSONObject?) {
         if (x == null) throw AssertionError("expected non-null")
+    }
+    private fun assertFalse(x: Boolean) {
+        if (x) throw AssertionError("expected false")
     }
 }
