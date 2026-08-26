@@ -570,32 +570,6 @@ private fun SettingToggleItem(
                 uncheckedTrackColor = AppTheme.colors.surfaceElevated
             )
         )
-        Spacer(Modifier.height(16.dp))
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(containerColor = AppTheme.colors.surfaceCard)
-        ) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    "Maximus VPN",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = AppTheme.colors.textPrimary
-                )
-                Text(
-                    "Version 1.0.0 \u2022 by DrFXAi",
-                    fontSize = 13.sp,
-                    color = AppTheme.colors.textSecondary
-                )
-                Text(
-                    "VLESS client powered by Xray-core",
-                    fontSize = 12.sp,
-                    color = AppTheme.colors.textMuted
-                )
-            }
-        }
-
     }
 }
 
