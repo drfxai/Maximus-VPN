@@ -9,30 +9,18 @@ import kotlinx.coroutines.withContext
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
-import java.security.cert.X509Certificate
 import javax.net.ssl.SNIHostName
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLParameters
 import javax.net.ssl.SSLSocket
-import javax.net.ssl.TrustManager
-import javax.net.ssl.X509TrustManager
 
 object ServerTester {
 
-    private fun createTrustAllSslContext(): SSLContext {
-        val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
-            override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
-            override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
-            override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
-        })
-        val sslContext = SSLContext.getInstance("TLS")
-        sslContext.init(null, trustAllCerts, java.security.SecureRandom())
-        return sslContext
-    }
-
     /**
-     * Performs a real multi-stage connectivity and latency test against the remote VLESS endpoint.
-     * Tests: 1. Configuration validity, 2. DNS resolution, 3. TCP 3-way handshake, 4. TLS/REALITY handshake if applicable.
+     * Performs a connectivity and latency test against the remote endpoint.
+     * Tests: 1. Configuration validity, 2. DNS resolution, 3. TCP handshake, and
+     * 4. normal TLS handshake when security=tls. REALITY is intentionally TCP-only:
+     * an ordinary X509 TLS handshake is not a valid REALITY compatibility test.
      */
     suspend fun testServer(profile: VlessProfile, timeoutMs: Int = 4000): ServerTestResult = withContext(Dispatchers.IO) {
         try {
@@ -60,18 +48,17 @@ object ServerTester {
 
             val tcpLatency = System.currentTimeMillis() - startTime
 
-            // Stage 3: TLS / Handshake Test if configured
-            val finalLatency = if (profile.security.equals("tls", ignoreCase = true) || profile.security.equals("reality", ignoreCase = true)) {
-                val sslContext = createTrustAllSslContext()
-                val sslFactory = sslContext.socketFactory
+            // Stage 3: normal TLS handshake only. REALITY uses Xray's own handshake
+            // and cannot be validated by a stock SSLSocket.
+            val finalLatency = if (profile.security.equals("tls", ignoreCase = true)) {
+                val sslFactory = SSLContext.getDefault().socketFactory
                 val sniHost = if (profile.sni.isNotBlank()) profile.sni else profile.address
                 sslSocket = sslFactory.createSocket(socket, sniHost, profile.port, true) as SSLSocket
                 sslSocket.soTimeout = timeoutMs
 
                 val sslParams = SSLParameters().apply {
-                    if (sniHost.isNotBlank()) {
-                        serverNames = listOf(SNIHostName(sniHost))
-                    }
+                    endpointIdentificationAlgorithm = "HTTPS"
+                    if (sniHost.isNotBlank()) serverNames = listOf(SNIHostName(sniHost))
                 }
                 sslSocket.sslParameters = sslParams
                 sslSocket.startHandshake()
