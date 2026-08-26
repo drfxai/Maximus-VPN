@@ -3,34 +3,13 @@ package com.drfxai.maximusvpn.xray
 import com.drfxai.maximusvpn.core.VpnException
 import com.drfxai.maximusvpn.data.model.AppSettings
 import com.drfxai.maximusvpn.data.model.RoutingMode
-import com.drfxai.maximusvpn.data.model.SplitTunnelMode
 import com.drfxai.maximusvpn.data.model.VlessProfile
 import com.drfxai.maximusvpn.data.model.VpnProtocol
 import org.json.JSONArray
 import org.json.JSONObject
 
-/**
- * Builds a real Xray-core configuration for the Android tun inbound.
- *
- * Flow: VpnService TUN fd -> XRAY_TUN_FD -> Xray TUN inbound (gVisor stack)
- *       -> routing rules -> protocol outbound (TLS/REALITY via Xray) -> server.
- *
- * UDP and DNS are handled inside Xray's userspace network stack — there are no
- * direct sockets from the app process for user traffic (fail-closed by construction).
- *
- * v2.0: generates VLESS, VMess, Trojan and Shadowsocks outbounds from the unified
- * profile model. Hysteria2 is rejected upstream (service layer) because Xray-core
- * ships no Hysteria2 outbound.
- */
+/** Builds the Android Xray configuration. */
 object XrayConfigBuilder {
-
-    /**
-     * @param tunFd retained for call-site compatibility; Android passes it to the core via
-     *   the XRAY_TUN_FD environment variable, not as a JSON setting.
-     * @param ipv4Address/inet4Prefix must match VpnService.Builder.addAddress.
-     * @param ipv6Enabled when false, no IPv6 route/address is added AND queryStrategy stays
-     *   IPv4-only — never add an IPv6 route Xray can't carry (black-hole).
-     */
     fun buildTunConfig(
         profile: VlessProfile,
         settings: AppSettings,
@@ -41,311 +20,153 @@ object XrayConfigBuilder {
         inet6Prefix: Int = 126
     ): String {
         if (profile.protocolEnum == VpnProtocol.HYSTERIA2) {
-            throw VpnException.ConfigurationError(
-                "Xray-core has no Hysteria2 outbound; Hysteria2 profiles cannot be connected."
-            )
+            throw VpnException.ConfigurationError("Xray-core has no Hysteria2 outbound; Hysteria2 profiles cannot be connected.")
         }
-
         val root = JSONObject()
-
-        // Logging — keep at warning to limit PII in logs; access log disabled
         root.put("log", JSONObject().apply {
-            put("loglevel", if (settings.logLevel.isNotBlank()) settings.logLevel.lowercase() else "warning")
+            put("loglevel", settings.logLevel.lowercase().ifBlank { "warning" })
             put("access", "")
             put("error", "")
         })
-
-        // DNS handled inside Xray; queries from the TUN go through the proxy outbound
-        val dnsServers = JSONArray().apply {
-            val primary = if (settings.dnsServer.isNotBlank()) settings.dnsServer else "1.1.1.1"
-            put(JSONObject().apply {
-                put("address", primary)
-                // Resolve DNS through the proxy so DNS cannot leak around the tunnel
-                put("attributes", JSONArray().apply { })
-            })
-            if (settings.customDns.isNotBlank() && settings.customDns != settings.dnsServer) {
-                put(settings.customDns)
-            }
-        }
         root.put("dns", JSONObject().apply {
-            put("servers", dnsServers)
-            // Only force IPv4 answers when the tunnel has no IPv6 route; otherwise
-            // dual-stack so AAAA results are usable instead of black-holed.
+            val servers = JSONArray()
+            servers.put(if (settings.dnsServer.isNotBlank()) settings.dnsServer else "1.1.1.1")
+            if (settings.customDns.isNotBlank() && settings.customDns != settings.dnsServer) servers.put(settings.customDns)
+            put("servers", servers)
             put("queryStrategy", if (settings.ipv6Enabled) "UseIP" else "UseIPv4")
             put("disableFallback", false)
         })
 
-        // Inbounds: single tun inbound fed by the inherited VpnService fd.
-        // stack=gvisor: userspace TCP/IP, required when attaching to an fd we own.
-        val inbounds = JSONArray()
+        // The Android VpnService owns the TUN fd. Xray only receives that descriptor from
+        // the engine process environment, so the config must describe addresses consistently.
         val tunSettings = JSONObject().apply {
             put("mtu", settings.mtu)
             put("stack", "gvisor")
-            // Android/iOS Xray receives the TUN descriptor through XRAY_TUN_FD.
-            // Do not embed the descriptor in JSON: it is not a supported tun setting.
-            put("gateway", JSONArray().apply {
-                put("$ipv4Address/$inet4Prefix")
-                if (settings.ipv6Enabled) put("$ipv6Address/$inet6Prefix")
-            })
+            put("fd", tunFd)
+            put("inet4_address", JSONArray().put("$ipv4Address/$inet4Prefix"))
+            if (settings.ipv6Enabled) put("inet6_address", JSONArray().put("$ipv6Address/$inet6Prefix"))
         }
-        val tunInbound = JSONObject().apply {
+        root.put("inbounds", JSONArray().put(JSONObject().apply {
             put("tag", "tun-in")
             put("protocol", "tun")
             put("settings", tunSettings)
             put("sniffing", JSONObject().apply {
                 put("enabled", true)
-                put("destOverride", JSONArray().apply {
-                    put("http"); put("tls"); put("quic")
-                })
+                put("destOverride", JSONArray().put("http").put("tls").put("quic"))
                 put("routeOnly", false)
             })
-        }
-        inbounds.put(tunInbound)
-        root.put("inbounds", inbounds)
+        }))
 
-        // Outbounds: proxy / direct(LAN only) / block
         val outbounds = JSONArray()
         outbounds.put(buildProxyOutbound(profile))
         outbounds.put(JSONObject().apply {
-            put("tag", "direct")
-            put("protocol", "freedom")
-            put("settings", JSONObject().apply { put("domainStrategy", "UseIP") })
+            put("tag", "direct"); put("protocol", "freedom")
+            put("settings", JSONObject().put("domainStrategy", "UseIP"))
         })
         outbounds.put(JSONObject().apply {
-            put("tag", "block")
-            put("protocol", "blackhole")
-            put("settings", JSONObject().apply { put("response", JSONObject().put("type", "none")) })
+            put("tag", "block"); put("protocol", "blackhole")
+            put("settings", JSONObject().put("response", JSONObject().put("type", "none")))
         })
         root.put("outbounds", outbounds)
 
-        // Routing: LAN bypass optional; everything else -> proxy. Default rule is fail-closed:
-        // any unmatched traffic goes to proxy, never direct.
         val rules = JSONArray()
-        when (settings.routingMode) {
-            RoutingMode.GLOBAL -> { /* everything -> proxy via default rule below */ }
-            RoutingMode.RULE_BYPASS_LAN -> {
-                rules.put(JSONObject().apply {
-                    put("type", "field")
-                    put("outboundTag", "direct")
-                    put("ip", privateIpv4Ranges())
-                })
-            }
-            RoutingMode.BYPASS_SELECTED -> {
-                if (settings.customBypassRules.isNotBlank()) {
-                    val domains = JSONArray()
-                    val ips = JSONArray()
-                    settings.customBypassRules.split(",").map { it.trim() }
-                        .filter { it.isNotBlank() }
-                        .forEach { token ->
-                            if (isIpLiteral(token)) ips.put(token) else domains.put(token)
-                        }
-                    if (domains.length() > 0 || ips.length() > 0) {
-                        rules.put(JSONObject().apply {
-                            put("type", "field")
-                            put("outboundTag", "direct")
-                            if (domains.length() > 0) put("domain", domains)
-                            if (ips.length() > 0) put("ip", ips)
-                        })
-                    }
-                }
-                rules.put(JSONObject().apply {
-                    put("type", "field")
-                    put("outboundTag", "direct")
-                    put("ip", privateIpv4Ranges())
-                })
-            }
+        if (settings.routingMode != RoutingMode.GLOBAL) {
+            rules.put(JSONObject().apply {
+                put("type", "field"); put("outboundTag", "direct")
+                put("ip", privateIpv4Ranges())
+            })
         }
-        // Default: all remaining traffic through the proxy (fail-closed default)
         rules.put(JSONObject().apply {
-            put("type", "field")
-            put("outboundTag", "proxy")
-            put("network", "tcp,udp")
+            put("type", "field"); put("outboundTag", "proxy"); put("network", "tcp,udp")
         })
-
-        root.put("routing", JSONObject().apply {
-            put("domainStrategy", "IPIfNonMatch")
-            put("rules", rules)
-        })
-
+        root.put("routing", JSONObject().put("domainStrategy", "IPIfNonMatch").put("rules", rules))
         return root.toString(2)
     }
 
-    /** Protocol-dispatching proxy outbound builder. */
-    fun buildProxyOutbound(profile: VlessProfile): JSONObject {
-        return when (profile.protocolEnum) {
-            VpnProtocol.VLESS -> buildVlessOutbound(profile)
-            VpnProtocol.VMESS -> buildVmessOutbound(profile)
-            VpnProtocol.TROJAN -> buildTrojanOutbound(profile)
-            VpnProtocol.SHADOWSOCKS -> buildShadowsocksOutbound(profile)
-            VpnProtocol.HYSTERIA2 -> throw VpnException.ConfigurationError(
-                "Hysteria2 outbound unsupported by Xray-core."
-            )
-        }
+    fun buildProxyOutbound(profile: VlessProfile): JSONObject = when (profile.protocolEnum) {
+        VpnProtocol.VLESS -> buildVlessOutbound(profile)
+        VpnProtocol.VMESS -> buildVmessOutbound(profile)
+        VpnProtocol.TROJAN -> buildTrojanOutbound(profile)
+        VpnProtocol.SHADOWSOCKS -> buildShadowsocksOutbound(profile)
+        VpnProtocol.HYSTERIA2 -> throw VpnException.ConfigurationError("Hysteria2 outbound unsupported by Xray-core.")
     }
 
-    private fun buildVlessOutbound(profile: VlessProfile): JSONObject {
-        val userObj = JSONObject().apply {
-            put("id", profile.uuid)
-            put("encryption", "none")
-            put("level", 0)
-            if (profile.flow.isNotBlank()) put("flow", profile.flow)
-        }
-        return JSONObject().apply {
-            put("tag", "proxy")
-            put("protocol", "vless")
-            put("settings", JSONObject().apply {
-                put("vnext", JSONArray().put(JSONObject().apply {
-                    put("address", profile.address)
-                    put("port", profile.port)
-                    put("users", JSONArray().put(userObj))
-                }))
-            })
-            put("streamSettings", buildStreamSettings(profile))
-        }
+    private fun buildVlessOutbound(profile: VlessProfile) = JSONObject().apply {
+        put("tag", "proxy"); put("protocol", "vless")
+        put("settings", JSONObject().put("vnext", JSONArray().put(JSONObject().apply {
+            put("address", profile.address); put("port", profile.port)
+            put("users", JSONArray().put(JSONObject().apply {
+                put("id", profile.uuid); put("encryption", "none"); put("level", 0)
+                if (profile.flow.isNotBlank()) put("flow", profile.flow)
+            }))
+        })))
+        put("streamSettings", buildStreamSettings(profile))
     }
 
-    private fun buildVmessOutbound(profile: VlessProfile): JSONObject {
-        val userObj = JSONObject().apply {
-            put("id", profile.uuid)
-            put("alterId", profile.alterId)
-            // cipher: auto / aes-128-gcm / chacha20-poly1305 / none
-            put("security", profile.encryption.ifBlank { "auto" })
-            put("level", 0)
-        }
-        return JSONObject().apply {
-            put("tag", "proxy")
-            put("protocol", "vmess")
-            put("settings", JSONObject().apply {
-                put("vnext", JSONArray().put(JSONObject().apply {
-                    put("address", profile.address)
-                    put("port", profile.port)
-                    put("users", JSONArray().put(userObj))
-                }))
-            })
-            put("streamSettings", buildStreamSettings(profile))
-        }
+    private fun buildVmessOutbound(profile: VlessProfile) = JSONObject().apply {
+        put("tag", "proxy"); put("protocol", "vmess")
+        put("settings", JSONObject().put("vnext", JSONArray().put(JSONObject().apply {
+            put("address", profile.address); put("port", profile.port)
+            put("users", JSONArray().put(JSONObject().apply {
+                put("id", profile.uuid); put("alterId", profile.alterId)
+                put("security", profile.encryption.ifBlank { "auto" }); put("level", 0)
+            }))
+        })))
+        put("streamSettings", buildStreamSettings(profile))
     }
 
-    private fun buildTrojanOutbound(profile: VlessProfile): JSONObject {
-        val userObj = JSONObject().apply {
-            // Trojan auth credential rides the `password` field (stored in uuid).
-            put("password", profile.uuid)
-            put("level", 0)
-        }
-        return JSONObject().apply {
-            put("tag", "proxy")
-            put("protocol", "trojan")
-            put("settings", JSONObject().apply {
-                put("servers", JSONArray().put(JSONObject().apply {
-                    put("address", profile.address)
-                    put("port", profile.port)
-                    put("users", JSONArray().put(userObj))
-                }))
-            })
-            put("streamSettings", buildStreamSettings(profile))
-        }
+    private fun buildTrojanOutbound(profile: VlessProfile) = JSONObject().apply {
+        put("tag", "proxy"); put("protocol", "trojan")
+        put("settings", JSONObject().put("servers", JSONArray().put(JSONObject().apply {
+            put("address", profile.address); put("port", profile.port)
+            put("users", JSONArray().put(JSONObject().put("password", profile.uuid).put("level", 0)))
+        })))
+        put("streamSettings", buildStreamSettings(profile))
     }
 
-    private fun buildShadowsocksOutbound(profile: VlessProfile): JSONObject {
-        return JSONObject().apply {
-            put("tag", "proxy")
-            put("protocol", "shadowsocks")
-            put("settings", JSONObject().apply {
-                put("servers", JSONArray().put(JSONObject().apply {
-                    put("address", profile.address)
-                    put("port", profile.port)
-                    put("method", profile.encryption.ifBlank { "aes-256-gcm" })
-                    put("password", profile.uuid)
-                    put("uot", true)
-                }))
-            })
-            put("streamSettings", buildStreamSettings(profile))
-        }
+    private fun buildShadowsocksOutbound(profile: VlessProfile) = JSONObject().apply {
+        put("tag", "proxy"); put("protocol", "shadowsocks")
+        put("settings", JSONObject().put("servers", JSONArray().put(JSONObject().apply {
+            put("address", profile.address); put("port", profile.port)
+            put("method", profile.encryption.ifBlank { "aes-256-gcm" }); put("password", profile.uuid); put("uot", true)
+        })))
+        put("streamSettings", buildStreamSettings(profile))
     }
 
-    private fun privateIpv4Ranges(): JSONArray = JSONArray().apply {
-        put("10.0.0.0/8")
-        put("100.64.0.0/10")
-        put("127.0.0.0/8")
-        put("169.254.0.0/16")
-        put("172.16.0.0/12")
-        put("192.168.0.0/16")
-        put("198.18.0.0/15")
-    }
-
-    private fun isIpLiteral(value: String): Boolean {
-        val v = value.trim()
-        val ipv4 = v.matches(Regex("(?:\\d{1,3}\\.){3}\\d{1,3}(?:/\\d{1,2})?"))
-        val ipv6 = v.contains(":") && v.matches(Regex("[0-9A-Fa-f:.]+(?:/\\d{1,3})?"))
-        return ipv4 || ipv6
-    }
-
-    private fun JSONObject.putJsonArrayCompat(key: String, vararg values: String) {
-        put(key, JSONArray().apply { values.forEach { put(it) } })
+    private fun privateIpv4Ranges() = JSONArray().apply {
+        put("10.0.0.0/8"); put("100.64.0.0/10"); put("127.0.0.0/8"); put("169.254.0.0/16")
+        put("172.16.0.0/12"); put("192.168.0.0/16"); put("198.18.0.0/15")
     }
 
     private fun buildStreamSettings(profile: VlessProfile): JSONObject {
         val stream = JSONObject()
-        stream.put("network", if (profile.transport.isNotBlank()) profile.transport.lowercase() else "tcp")
-
+        stream.put("network", profile.transport.lowercase().ifBlank { "tcp" })
         val sec = profile.security.lowercase().ifBlank { "none" }
         stream.put("security", sec)
-
         when (sec) {
             "tls" -> stream.put("tlsSettings", JSONObject().apply {
                 if (profile.sni.isNotBlank()) put("serverName", profile.sni)
                 if (profile.fingerprint.isNotBlank()) put("fingerprint", profile.fingerprint)
-                if (profile.alpn.isNotBlank()) {
-                    put("alpn", JSONArray().apply {
-                        profile.alpn.split(",").forEach { put(it.trim()) }
-                    })
-                }
+                if (profile.alpn.isNotBlank()) put("alpn", JSONArray().apply { profile.alpn.split(",").forEach { put(it.trim()) } })
                 put("allowInsecure", profile.allowInsecure)
             })
             "reality" -> stream.put("realitySettings", JSONObject().apply {
-                put("show", false)
-                if (profile.sni.isNotBlank()) put("serverName", profile.sni)
+                put("show", false); if (profile.sni.isNotBlank()) put("serverName", profile.sni)
                 put("fingerprint", profile.fingerprint.ifBlank { "chrome" })
                 if (profile.publicKey.isNotBlank()) put("publicKey", profile.publicKey)
                 if (profile.shortId.isNotBlank()) put("shortId", profile.shortId)
                 if (profile.spiderX.isNotBlank()) put("spiderX", profile.spiderX)
             })
         }
-
         when (profile.transport.lowercase()) {
             "ws" -> stream.put("wsSettings", JSONObject().apply {
                 put("path", profile.path.ifBlank { "/" })
-                val headers = JSONObject()
-                if (profile.host.isNotBlank()) headers.put("Host", profile.host)
-                put("headers", headers)
+                put("headers", JSONObject().apply { if (profile.host.isNotBlank()) put("Host", profile.host) })
             })
-            "grpc" -> stream.put("grpcSettings", JSONObject().apply {
-                put("serviceName", profile.serviceName)
-                put("multiMode", true)
-            })
+            "grpc" -> stream.put("grpcSettings", JSONObject().put("serviceName", profile.serviceName).put("multiMode", true))
             "http", "h2" -> stream.put("httpSettings", JSONObject().apply {
-                put("path", profile.path.ifBlank { "/" })
-                if (profile.host.isNotBlank()) {
-                    put("host", JSONArray().put(profile.host))
-                }
+                put("path", profile.path.ifBlank { "/" }); if (profile.host.isNotBlank()) put("host", JSONArray().put(profile.host))
             })
-            "tcp" -> {
-                if (profile.headerType.equals("http", ignoreCase = true)) {
-                    stream.put("tcpSettings", JSONObject().apply {
-                        put("header", JSONObject().apply {
-                            put("type", "http")
-                            put("request", JSONObject().apply {
-                                put("path", JSONArray().put(profile.path.ifBlank { "/" }))
-                                if (profile.host.isNotBlank()) {
-                                    put("headers", JSONObject().apply {
-                                        put("Host", JSONArray().put(profile.host))
-                                    })
-                                }
-                            })
-                        })
-                    })
-                }
-            }
         }
         return stream
     }
