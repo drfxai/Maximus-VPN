@@ -49,6 +49,19 @@ class XrayConfigBuilderTest {
         val inbound = inbounds.getJSONObject(0)
         assertEquals("tun", inbound.getString("protocol"))
         assertEquals("tun-in", inbound.getString("tag"))
+        val tunSettings = inbound.getJSONObject("settings")
+        val gateway = tunSettings.getJSONArray("gateway")
+        assertEquals("172.19.0.1/30", gateway.getString(0))
+        assertEquals("fdfe:dcba:9876::1/126", gateway.getString(1))
+    }
+
+    @Test
+    fun buildTunConfig_androidTunFdIsPassedByEnvironmentNotJson() {
+        val json = JSONObject(XrayConfigBuilder.buildTunConfig(realityProfile(), settings(), tunFd = 1234))
+        val tunSettings = json.getJSONArray("inbounds").getJSONObject(0).getJSONObject("settings")
+        assertFalse(tunSettings.has("fd"))
+        assertFalse(tunSettings.has("inet4_address"))
+        assertFalse(tunSettings.has("inet6_address"))
     }
 
     @Test
@@ -83,6 +96,28 @@ class XrayConfigBuilderTest {
         val lastRule = rules.getJSONObject(rules.length() - 1)
         assertEquals("proxy", lastRule.getString("outboundTag"))
         assertEquals("tcp,udp", lastRule.getString("network"))
+    }
+
+    @Test
+    fun buildTunConfig_privateBypassDoesNotRequireGeoIpFile() {
+        val json = JSONObject(XrayConfigBuilder.buildTunConfig(realityProfile(), settings(), tunFd = 0))
+        val rules = json.getJSONObject("routing").getJSONArray("rules")
+        val ipRules = rules.getJSONObject(0).getJSONArray("ip")
+        assertTrue(ipRules.getString(0).startsWith("10."))
+        assertTrue(ipRules.getString(ipRules.length() - 1).contains("198.18."))
+    }
+
+    @Test
+    fun buildTunConfig_selectedBypassClassifiesIpAndDomain() {
+        val settings = settings().copy(
+            routingMode = RoutingMode.BYPASS_SELECTED,
+            customBypassRules = "192.168.50.10,example.local"
+        )
+        val json = JSONObject(XrayConfigBuilder.buildTunConfig(realityProfile(), settings, tunFd = 0))
+        val rules = json.getJSONObject("routing").getJSONArray("rules")
+        val selected = rules.getJSONObject(0)
+        assertEquals("192.168.50.10", selected.getJSONArray("ip").getString(0))
+        assertEquals("example.local", selected.getJSONArray("domain").getString(0))
     }
 
     @Test
