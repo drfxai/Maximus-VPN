@@ -78,7 +78,7 @@ fun QrCameraScanner(
     }
 
     val executor = remember { Executors.newSingleThreadExecutor() }
-    var decoded by remember { mutableStateOf(false) }
+    val decoded = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
     DisposableEffect(Unit) { onDispose { executor.shutdown() } }
 
     Box(modifier.fillMaxWidth().aspectRatio(1f)) {
@@ -100,22 +100,27 @@ fun QrCameraScanner(
                             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                             .build()
                         analysis.setAnalyzer(executor) { proxy ->
-                            if (decoded) { proxy.close(); return@setAnalyzer }
+                            if (decoded.get()) { proxy.close(); return@setAnalyzer }
                             try {
                                 val plane = proxy.planes[0]
+                                val buffer = plane.buffer
+                                val bytes = ByteArray(buffer.remaining())
+                                buffer.get(bytes)
                                 val source = PlanarYUVLuminanceSource(
-                                    plane.buffer.array(),
-                                    plane.rowStride,
-                                    proxy.height.coerceAtMost(plane.buffer.capacity() / plane.rowStride),
+                                    bytes,
+                                    proxy.width,
+                                    proxy.height,
                                     0, 0,
-                                    proxy.width.coerceAtMost(plane.rowStride),
-                                    proxy.height.coerceAtMost(plane.buffer.capacity() / plane.rowStride),
+                                    proxy.width,
+                                    proxy.height,
                                     false
                                 )
                                 val bitmap = BinaryBitmap(HybridBinarizer(source))
                                 val result = reader.decodeWithState(bitmap)
-                                decoded = true
-                                onQrScanned(result.text)
+                                decoded.set(true)
+                                ContextCompat.getMainExecutor(context).execute {
+                                    onQrScanned(result.text)
+                                }
                             } catch (_: Exception) {
                                 // no QR in this frame — normal
                             } finally {

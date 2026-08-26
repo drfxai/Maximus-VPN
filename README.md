@@ -23,9 +23,9 @@ diagnostics, leak checks, and secure profile management included.
 | UDP through tunnel | ✅ handled inside Xray tun stack |
 | DNS through tunnel | ✅ resolved via Xray DNS module |
 | Fail-closed design | ✅ no direct fallback; failure tears down the TUN |
-| Kill switch (Android) | ✅ optional lockdown while connecting |
+| Android lockdown / kill switch | ✅ via Android Always-on VPN + “Block connections without VPN” (system setting) |
 | Server import (`vless://`) | ✅ Android + Desktop |
-| QR camera scan | ❌ not implemented (paste/payload import only) |
+| QR camera scan | ✅ live CameraX + ZXing scan; payload/link import also supported |
 
 ## Downloads
 

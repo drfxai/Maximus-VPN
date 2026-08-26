@@ -2,7 +2,6 @@ package com.drfxai.maximus.desktop
 
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
@@ -71,13 +70,17 @@ object XrayConfigBuilder {
                     // local socks inbound by tagging the proxy outbound's traffic.
                     add(buildJsonObject {
                         put("type", "field")
-                        put("ip", JsonArray(listOf(JsonPrimitive(p.address))))
                         put("outboundTag", "direct")
+                        if (isIpLiteral(p.address)) {
+                            put("ip", JsonArray(listOf(JsonPrimitive(p.address))))
+                        } else {
+                            put("domain", JsonArray(listOf(JsonPrimitive(p.address))))
+                        }
                     })
                     add(buildJsonObject {
                         put("type", "field")
                         put("outboundTag", "direct")
-                        put("ip", JsonArray(listOf(JsonPrimitive("geoip:private"))))
+                        put("ip", privateIpv4Ranges())
                     })
                     add(buildJsonObject {
                         put("type", "field")
@@ -158,6 +161,25 @@ object XrayConfigBuilder {
             }
         }
     }
+
+    private fun isIpLiteral(value: String): Boolean {
+        val v = value.trim()
+        val ipv4 = Regex("^(?:\\d{1,3}\\.){3}\\d{1,3}$").matches(v)
+        val ipv6 = v.contains(":") && v.matches(Regex("^[0-9A-Fa-f:]+$"))
+        return ipv4 || ipv6
+    }
+
+    private fun privateIpv4Ranges(): JsonArray = JsonArray(
+        listOf(
+            JsonPrimitive("10.0.0.0/8"),
+            JsonPrimitive("100.64.0.0/10"),
+            JsonPrimitive("127.0.0.0/8"),
+            JsonPrimitive("169.254.0.0/16"),
+            JsonPrimitive("172.16.0.0/12"),
+            JsonPrimitive("192.168.0.0/16"),
+            JsonPrimitive("198.18.0.0/15")
+        )
+    )
 
     private fun directOutbound() = buildJsonObject {
         put("tag", "direct")
