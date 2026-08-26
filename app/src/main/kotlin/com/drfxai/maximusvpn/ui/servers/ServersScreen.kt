@@ -111,9 +111,9 @@ fun ServersScreen(
 
                 // Theme Toggle Switch at Top
                 ThemeToggleSwitch(
-                    isDark = settings.darkTheme,
+                    isDark = (settings.themeMode != com.drfxai.maximusvpn.data.model.ThemeMode.LIGHT),
                     onThemeChange = { isDark ->
-                        settingsViewModel.setDarkTheme(isDark)
+                        settingsViewModel.setThemeMode(if (isDark) com.drfxai.maximusvpn.data.model.ThemeMode.DARK else com.drfxai.maximusvpn.data.model.ThemeMode.LIGHT)
                     }
                 )
             }

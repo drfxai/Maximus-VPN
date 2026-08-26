@@ -61,7 +61,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             val settings by settingsViewModel.settings.collectAsStateWithLifecycle()
 
-            MyApplicationTheme(darkTheme = settings.darkTheme) {
+            MyApplicationTheme(themeMode = settings.themeMode) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = AppTheme.colors.background

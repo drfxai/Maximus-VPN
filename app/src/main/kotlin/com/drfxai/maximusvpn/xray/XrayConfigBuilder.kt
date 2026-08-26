@@ -1,19 +1,26 @@
 package com.drfxai.maximusvpn.xray
 
+import com.drfxai.maximusvpn.core.VpnException
 import com.drfxai.maximusvpn.data.model.AppSettings
 import com.drfxai.maximusvpn.data.model.RoutingMode
+import com.drfxai.maximusvpn.data.model.SplitTunnelMode
 import com.drfxai.maximusvpn.data.model.VlessProfile
+import com.drfxai.maximusvpn.data.model.VpnProtocol
 import org.json.JSONArray
 import org.json.JSONObject
 
 /**
  * Builds a real Xray-core configuration for the Android tun inbound.
  *
- * Flow: VpnService TUN fd -> [xray.tun.fd env] -> Xray tun inbound (gVisor stack)
- *       -> routing rules -> VLESS outbound (TLS/REALITY via Xray) -> server.
+ * Flow: VpnService TUN fd -> [tun settings.fd] -> Xray tun inbound (gVisor stack)
+ *       -> routing rules -> protocol outbound (TLS/REALITY via Xray) -> server.
  *
  * UDP and DNS are handled inside Xray's userspace network stack — there are no
  * direct sockets from the app process for user traffic (fail-closed by construction).
+ *
+ * v2.0: generates VLESS, VMess, Trojan and Shadowsocks outbounds from the unified
+ * profile model. Hysteria2 is rejected upstream (service layer) because Xray-core
+ * ships no Hysteria2 outbound.
  */
 object XrayConfigBuilder {
 
@@ -32,6 +39,12 @@ object XrayConfigBuilder {
         ipv6Address: String = "fdfe:dcba:9876::1",
         inet6Prefix: Int = 126
     ): String {
+        if (profile.protocolEnum == VpnProtocol.HYSTERIA2) {
+            throw VpnException.ConfigurationError(
+                "Xray-core has no Hysteria2 outbound; Hysteria2 profiles cannot be connected."
+            )
+        }
+
         val root = JSONObject()
 
         // Logging — keep at warning to limit PII in logs; access log disabled
@@ -91,28 +104,7 @@ object XrayConfigBuilder {
 
         // Outbounds: proxy / direct(LAN only) / block
         val outbounds = JSONArray()
-
-        val userObj = JSONObject().apply {
-            put("id", profile.uuid)
-            put("encryption", "none")
-            put("level", 0)
-            if (profile.flow.isNotBlank()) put("flow", profile.flow)
-        }
-        val vnextArray = JSONArray().put(JSONObject().apply {
-            put("address", profile.address)
-            put("port", profile.port)
-            put("users", JSONArray().put(userObj))
-        })
-
-        val streamSettings = buildStreamSettings(profile)
-
-        outbounds.put(JSONObject().apply {
-            put("tag", "proxy")
-            put("protocol", "vless")
-            put("settings", JSONObject().apply { put("vnext", vnextArray) })
-            put("streamSettings", streamSettings)
-        })
-
+        outbounds.put(buildProxyOutbound(profile))
         outbounds.put(JSONObject().apply {
             put("tag", "direct")
             put("protocol", "freedom")
@@ -125,7 +117,7 @@ object XrayConfigBuilder {
         })
         root.put("outbounds", outbounds)
 
-        // Routing: LAN bypass optional; everything else -> proxy. Default route is fail-closed:
+        // Routing: LAN bypass optional; everything else -> proxy. Default rule is fail-closed:
         // any unmatched traffic goes to proxy, never direct.
         val rules = JSONArray()
         when (settings.routingMode) {
@@ -173,6 +165,99 @@ object XrayConfigBuilder {
         return root.toString(2)
     }
 
+    /** Protocol-dispatching proxy outbound builder. */
+    fun buildProxyOutbound(profile: VlessProfile): JSONObject {
+        return when (profile.protocolEnum) {
+            VpnProtocol.VLESS -> buildVlessOutbound(profile)
+            VpnProtocol.VMESS -> buildVmessOutbound(profile)
+            VpnProtocol.TROJAN -> buildTrojanOutbound(profile)
+            VpnProtocol.SHADOWSOCKS -> buildShadowsocksOutbound(profile)
+            VpnProtocol.HYSTERIA2 -> throw VpnException.ConfigurationError(
+                "Hysteria2 outbound unsupported by Xray-core."
+            )
+        }
+    }
+
+    private fun buildVlessOutbound(profile: VlessProfile): JSONObject {
+        val userObj = JSONObject().apply {
+            put("id", profile.uuid)
+            put("encryption", "none")
+            put("level", 0)
+            if (profile.flow.isNotBlank()) put("flow", profile.flow)
+        }
+        return JSONObject().apply {
+            put("tag", "proxy")
+            put("protocol", "vless")
+            put("settings", JSONObject().apply {
+                put("vnext", JSONArray().put(JSONObject().apply {
+                    put("address", profile.address)
+                    put("port", profile.port)
+                    put("users", JSONArray().put(userObj))
+                }))
+            })
+            put("streamSettings", buildStreamSettings(profile))
+        }
+    }
+
+    private fun buildVmessOutbound(profile: VlessProfile): JSONObject {
+        val userObj = JSONObject().apply {
+            put("id", profile.uuid)
+            put("alterId", profile.alterId)
+            // cipher: auto / aes-128-gcm / chacha20-poly1305 / none
+            put("security", profile.encryption.ifBlank { "auto" })
+            put("level", 0)
+        }
+        return JSONObject().apply {
+            put("tag", "proxy")
+            put("protocol", "vmess")
+            put("settings", JSONObject().apply {
+                put("vnext", JSONArray().put(JSONObject().apply {
+                    put("address", profile.address)
+                    put("port", profile.port)
+                    put("users", JSONArray().put(userObj))
+                }))
+            })
+            put("streamSettings", buildStreamSettings(profile))
+        }
+    }
+
+    private fun buildTrojanOutbound(profile: VlessProfile): JSONObject {
+        val userObj = JSONObject().apply {
+            // Trojan auth credential rides the `password` field (stored in uuid).
+            put("password", profile.uuid)
+            put("level", 0)
+        }
+        return JSONObject().apply {
+            put("tag", "proxy")
+            put("protocol", "trojan")
+            put("settings", JSONObject().apply {
+                put("servers", JSONArray().put(JSONObject().apply {
+                    put("address", profile.address)
+                    put("port", profile.port)
+                    put("users", JSONArray().put(userObj))
+                }))
+            })
+            put("streamSettings", buildStreamSettings(profile))
+        }
+    }
+
+    private fun buildShadowsocksOutbound(profile: VlessProfile): JSONObject {
+        return JSONObject().apply {
+            put("tag", "proxy")
+            put("protocol", "shadowsocks")
+            put("settings", JSONObject().apply {
+                put("servers", JSONArray().put(JSONObject().apply {
+                    put("address", profile.address)
+                    put("port", profile.port)
+                    put("method", profile.encryption.ifBlank { "aes-256-gcm" })
+                    put("password", profile.uuid)
+                    put("uot", true)
+                }))
+            })
+            put("streamSettings", buildStreamSettings(profile))
+        }
+    }
+
     private fun JSONObject.putJsonArrayCompat(key: String, vararg values: String) {
         put(key, JSONArray().apply { values.forEach { put(it) } })
     }
@@ -193,7 +278,7 @@ object XrayConfigBuilder {
                         profile.alpn.split(",").forEach { put(it.trim()) }
                     })
                 }
-                put("allowInsecure", false)
+                put("allowInsecure", profile.allowInsecure)
             })
             "reality" -> stream.put("realitySettings", JSONObject().apply {
                 put("show", false)

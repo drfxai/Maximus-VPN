@@ -32,6 +32,14 @@ object VpnController {
         ContextCompat.startForegroundService(context, intent)
     }
 
+    /** Starts the service to connect the last selected profile. */
+    fun startVpnFromSelected(context: Context) {
+        val intent = Intent(context, MaximusVpnService::class.java).apply {
+            action = ACTION_CONNECT
+        }
+        ContextCompat.startForegroundService(context, intent)
+    }
+
     /**
      * Stops the running VPN connection and tears down the tunnel cleanly.
      */

@@ -22,6 +22,16 @@ interface ServerProfileDao {
     @Query("SELECT COUNT(*) FROM server_profiles")
     suspend fun getCount(): Int
 
+    /** De-duplication helper for imports/subscriptions. */
+    @Query(
+        "SELECT * FROM server_profiles WHERE protocol = :protocol AND address = :address " +
+            "AND port = :port AND uuid = :uuid LIMIT 1"
+    )
+    suspend fun findByEndpoint(protocol: String, address: String, port: Int, uuid: String): ServerProfileEntity?
+
+    @Query("SELECT * FROM server_profiles WHERE subscriptionId = :subscriptionId")
+    suspend fun getBySubscriptionId(subscriptionId: String): List<ServerProfileEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(entity: ServerProfileEntity)
 
@@ -39,6 +49,9 @@ interface ServerProfileDao {
 
     @Query("DELETE FROM server_profiles WHERE id = :id")
     suspend fun deleteById(id: String)
+
+    @Query("DELETE FROM server_profiles WHERE subscriptionId = :subscriptionId")
+    suspend fun deleteBySubscriptionId(subscriptionId: String)
 
     @Query("DELETE FROM server_profiles")
     suspend fun deleteAll()

@@ -12,8 +12,8 @@ android {
     applicationId = "com.drfxai.maximusvpn"
     minSdk = 24
     targetSdk = 36
-    versionCode = (providers.gradleProperty("versionCode").orNull?.toIntOrNull() ?: 1)
-    versionName = providers.gradleProperty("versionName").orElse("1.0.0").get()
+    versionCode = (providers.gradleProperty("versionCode").orNull?.toIntOrNull() ?: 2)
+    versionName = providers.gradleProperty("versionName").orElse("2.0.0").get()
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -51,7 +51,11 @@ android {
   buildTypes {
     release {
       isCrunchPngs = false
-      isMinifyEnabled = false
+      // v2.0: R8 enabled with resource shrinking. Keep rules in proguard-rules.pro
+      // preserve Xray config JSON field names (via org.json usage — reflective-safe)
+      // and gomobile JNI surface.
+      isMinifyEnabled = true
+      isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       val releaseKeystore = System.getenv("KEYSTORE_PATH")
       val releaseStorePassword = System.getenv("STORE_PASSWORD")
@@ -101,6 +105,7 @@ dependencies {
   implementation(libs.kotlinx.coroutines.core)
   implementation(libs.kotlinx.serialization.json)
   implementation(libs.okhttp)
+  implementation(libs.androidx.work.runtime)
   // QR scanning: ZXing core for decoding (camera via CameraX already in deps)
   implementation(libs.zxing.core)
   // QR scanner live preview

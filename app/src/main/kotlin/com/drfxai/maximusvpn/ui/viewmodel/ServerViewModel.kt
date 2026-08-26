@@ -8,6 +8,8 @@ import com.drfxai.maximusvpn.data.model.ServerTestStatus
 import com.drfxai.maximusvpn.data.model.VlessProfile
 import com.drfxai.maximusvpn.data.repository.ServerRepository
 import com.drfxai.maximusvpn.data.repository.SettingsRepository
+import com.drfxai.maximusvpn.subscription.SubscriptionRepository
+import com.drfxai.maximusvpn.subscription.SubscriptionUpdateWorker
 import com.drfxai.maximusvpn.vless.BatchParseResult
 import com.drfxai.maximusvpn.vless.VlessParser
 import com.drfxai.maximusvpn.vless.VlessValidator
@@ -28,7 +30,9 @@ enum class ServerSortOption {
 
 class ServerViewModel(
     private val repository: ServerRepository = MaximusApplication.instance.serverRepository,
-    private val settingsRepository: SettingsRepository = MaximusApplication.instance.settingsRepository
+    private val settingsRepository: SettingsRepository = MaximusApplication.instance.settingsRepository,
+    private val subscriptionRepository: SubscriptionRepository =
+        SubscriptionRepository.getInstance(MaximusApplication.instance)
 ) : ViewModel() {
 
     private val _searchQuery = MutableStateFlow("")
@@ -45,6 +49,18 @@ class ServerViewModel(
 
     private val _serverTestingStates = MutableStateFlow<Map<String, ServerTestStatus>>(emptyMap())
     val serverTestingStates: StateFlow<Map<String, ServerTestStatus>> = _serverTestingStates.asStateFlow()
+
+    // --- Import feedback ---
+    private val _importFeedback = MutableStateFlow<String?>(null)
+    val importFeedback: StateFlow<String?> = _importFeedback.asStateFlow()
+
+    val subscriptions: StateFlow<List<com.drfxai.maximusvpn.subscription.SubscriptionEntity>> =
+        subscriptionRepository.allSubscriptions().stateIn(
+            viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList()
+        )
+
+    private val _syncingSubIds = MutableStateFlow<Set<String>>(emptySet())
+    val syncingSubIds: StateFlow<Set<String>> = _syncingSubIds.asStateFlow()
 
     val selectedProfileId: StateFlow<String?> = settingsRepository.settingsFlow
         .combine(MutableStateFlow(Unit)) { settings, _ -> settings.selectedProfileId }
@@ -65,7 +81,8 @@ class ServerViewModel(
                 it.name.contains(query, ignoreCase = true) ||
                         it.address.contains(query, ignoreCase = true) ||
                         it.transport.contains(query, ignoreCase = true) ||
-                        it.security.contains(query, ignoreCase = true)
+                        it.security.contains(query, ignoreCase = true) ||
+                        it.protocolEnum.label.contains(query, ignoreCase = true)
             }
         }
         when (sort) {
@@ -151,9 +168,58 @@ class ServerViewModel(
         if (batchResult.successfulProfiles.isNotEmpty()) {
             viewModelScope.launch {
                 repository.insertAll(batchResult.successfulProfiles)
+                if (settingsRepository.getSettings().selectedProfileId == null) {
+                    settingsRepository.setSelectedProfileId(batchResult.successfulProfiles.first().id)
+                }
+                _importFeedback.value =
+                    "Imported ${batchResult.successfulProfiles.size} servers" +
+                    (if (batchResult.failedEntries.isNotEmpty())
+                        " (${batchResult.failedEntries.size} skipped)" else "")
             }
+        } else {
+            _importFeedback.value = "No valid server links found"
         }
         return batchResult
+    }
+
+    fun clearImportFeedback() {
+        _importFeedback.value = null
+    }
+
+    // --- Subscriptions ---
+
+    fun addSubscription(name: String, url: String, user: String?, password: String?) {
+        viewModelScope.launch {
+            try {
+                val sub = subscriptionRepository.addSubscription(name, url, user, password)
+                _syncingSubIds.value = _syncingSubIds.value + sub.id
+                val result = subscriptionRepository.sync(sub.id)
+                _syncingSubIds.value = _syncingSubIds.value - sub.id
+                _importFeedback.value = result.error
+                    ?: "Subscription synced: +${result.added} new, ${result.updated} existing"
+            } catch (e: Exception) {
+                _syncingSubIds.value = emptySet()
+                _importFeedback.value = "Subscription failed: ${e.message}"
+            }
+        }
+    }
+
+    fun syncSubscription(id: String) {
+        viewModelScope.launch {
+            _syncingSubIds.value = _syncingSubIds.value + id
+            val result = subscriptionRepository.sync(id)
+            _syncingSubIds.value = _syncingSubIds.value - id
+            _importFeedback.value = result.error
+                ?: "Subscription updated: +${result.added} ~${result.updated} -${result.removed}"
+        }
+    }
+
+    fun deleteSubscription(id: String) {
+        viewModelScope.launch { subscriptionRepository.deleteSubscription(id) }
+    }
+
+    fun scheduleAutoUpdates(context: android.content.Context, hours: Int, wifiOnly: Boolean) {
+        SubscriptionUpdateWorker.schedule(context, hours, wifiOnly)
     }
 
     fun testServer(profile: VlessProfile) {

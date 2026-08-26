@@ -1,21 +1,37 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# Maximus VPN — R8 / ProGuard rules (v2.0)
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# --- Compose / AndroidX (mostly shipped with their own rules) ---
+-dontwarn org.slf4j.**
+-dontwarn javax.naming.**
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# --- Kotlinx serialization / reflection safety for config JSON ---
+# Config JSON is built with org.json at runtime; no model reflection needed,
+# but keep enum values used via valueOf() lookups.
+-keepclassmembers enum com.drfxai.maximusvpn.data.model.** {
+    public static final **[] values();
+    public static final ** valueOf(java.lang.String);
+}
+-keepclassmembers enum com.drfxai.maximusvpn.data.repository.ServerSortOption {
+    public static final **[] values();
+    public static final ** valueOf(java.lang.String);
+}
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# --- Room entities: field names must survive for query verification & migrations ---
+-keep class com.drfxai.maximusvpn.data.database.** { *; }
+-keep class com.drfxai.maximusvpn.subscription.SubscriptionEntity { *; }
+
+# --- OkHttp / Okio ---
+-dontwarn okhttp3.internal.platform.**
+-dontwarn org.conscrypt.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.openjsse.**
+
+# --- ZXing (pure java, but keep hints enums intact) ---
+-keep class com.google.zxing.** { *; }
+
+# --- CameraX is AndroidX-managed; nothing extra required ---
+
+# Remove debug logging in release builds of our own classes
+-assumenosideeffects class com.drfxai.maximusvpn.xray.XrayLogManager {
+    public static void appendLog(...);
+}

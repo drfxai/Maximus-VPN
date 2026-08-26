@@ -45,19 +45,44 @@ enum class RoutingMode(val title: String, val description: String) {
     BYPASS_SELECTED("Custom Bypass List", "Bypass traffic matching specific user-defined domain and IP lists")
 }
 
+/**
+ * v2.0 application settings.
+ *
+ * Legacy-key mapping handled by SettingsRepository on load:
+ *  - darkTheme:Boolean        → themeMode (true=DARK, false=LIGHT)
+ *  - autoReconnect:Boolean    → reconnectPolicy (true=BALANCED, false=OFF)
+ */
 data class AppSettings(
-    val darkTheme: Boolean = true,
+    // --- Appearance ---
+    val themeMode: ThemeMode = ThemeMode.DARK,
+
+    // --- Tunnel / routing ---
     val routingMode: RoutingMode = RoutingMode.RULE_BYPASS_LAN,
     val dnsServer: String = "1.1.1.1",
     val customDns: String = "8.8.8.8",
-    val killSwitchEnabled: Boolean = false,
     val ipv6Enabled: Boolean = true,
-    val autoReconnect: Boolean = true,
-    val autoConnectOnBoot: Boolean = false,
-    val logLevel: String = "warning",
-    val selectedProfileId: String? = null,
     val mtu: Int = 1500,
-    val customBypassRules: String = "localhost,127.0.0.1,*.local,*.lan"
+    val customBypassRules: String = "localhost,127.0.0.1,*.local,*.lan",
+
+    // --- Reliability & protection ---
+    val killSwitchEnabled: Boolean = false,
+    val reconnectPolicy: ReconnectPolicy = ReconnectPolicy.BALANCED,
+    val autoConnectOnBoot: Boolean = false,
+
+    // --- Per-app split tunneling ---
+    val splitTunnelMode: SplitTunnelMode = SplitTunnelMode.DISABLED,
+
+    // --- Subscriptions ---
+    /** Auto-update interval in hours; 0 disables background updates. */
+    val subscriptionAutoUpdateHours: Int = 24,
+    val subscriptionUpdateOnWifiOnly: Boolean = true,
+
+    // --- Diagnostics ---
+    val logLevel: String = "warning",
+
+    // --- Selection state ---
+    val selectedProfileId: String? = null,
+    val onboardingCompleted: Boolean = false
 )
 
 data class DiagnosticReport(

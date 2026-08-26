@@ -6,6 +6,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
+import com.drfxai.maximusvpn.data.model.ThemeMode
 
 private val SophisticatedDarkColorScheme = darkColorScheme(
     primary = DarkAppColors.primary,
@@ -59,16 +60,20 @@ private val SophisticatedLightColorScheme = lightColorScheme(
 
 @Composable
 fun MyApplicationTheme(
-    darkTheme: Boolean = true,
+    themeMode: ThemeMode = ThemeMode.DARK,
+    darkTheme: Boolean = themeMode != ThemeMode.LIGHT,
     dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val colorScheme = if (darkTheme) SophisticatedDarkColorScheme else SophisticatedLightColorScheme
-    val appColors = if (darkTheme) DarkAppColors else LightAppColors
+    val appColors = if (themeMode == ThemeMode.AMOLED) AmoledAppColors
+                    else if (darkTheme) DarkAppColors else LightAppColors
 
     CompositionLocalProvider(LocalAppColors provides appColors) {
         MaterialTheme(
-            colorScheme = colorScheme,
+            colorScheme = if (themeMode == ThemeMode.AMOLED)
+                SophisticatedDarkColorScheme.copy(background = AmoledAppColors.background, surface = AmoledAppColors.surface)
+            else colorScheme,
             typography = Typography,
             content = content
         )

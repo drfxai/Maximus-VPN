@@ -10,9 +10,16 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
-
-    <!-- QR import: camera is used only while the scan dialog is open -->
+    <!-- Justification: camera access is used ONLY while the QR import screen is
+         visible, to scan server share-link QR codes on-device. No frames are
+         stored or transmitted. -->
     <uses-permission android:name="android.permission.CAMERA" />
+
+    <!-- v2rayNG-style per-app split tunneling query declaration (Android 11+).
+         Lets us show the full app list in the Split Tunneling picker without
+         broad storage access. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
 
     <application
         android:name=".MaximusApplication"
@@ -47,6 +54,18 @@
                 <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <!-- One-tap connect/disconnect Quick Settings tile -->
+        <service
+            android:name=".vpn.VpnTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_launcher_foreground"
+            android:label="@string/vpn_service_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
 
         <service
             android:name=".vpn.MaximusVpnService"

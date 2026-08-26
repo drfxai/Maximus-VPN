@@ -68,6 +68,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.drfxai.maximusvpn.R
+import com.drfxai.maximusvpn.data.model.ReconnectPolicy
 import com.drfxai.maximusvpn.data.model.RoutingMode
 import com.drfxai.maximusvpn.ui.components.ThemeToggleSwitch
 import com.drfxai.maximusvpn.ui.theme.AppTheme
@@ -107,9 +108,9 @@ fun SettingsScreen(
             }
 
             ThemeToggleSwitch(
-                isDark = settings.darkTheme,
+                isDark = (settings.themeMode != com.drfxai.maximusvpn.data.model.ThemeMode.LIGHT),
                 onThemeChange = { isDark ->
-                    viewModel.setDarkTheme(isDark)
+                    viewModel.setThemeMode(if (isDark) com.drfxai.maximusvpn.data.model.ThemeMode.DARK else com.drfxai.maximusvpn.data.model.ThemeMode.LIGHT)
                 }
             )
         }
@@ -143,16 +144,16 @@ fun SettingsScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = if (settings.darkTheme) Icons.Default.DarkMode else Icons.Default.WbSunny,
+                                imageVector = if ((settings.themeMode != com.drfxai.maximusvpn.data.model.ThemeMode.LIGHT)) Icons.Default.DarkMode else Icons.Default.WbSunny,
                                 contentDescription = null,
-                                tint = if (settings.darkTheme) AppTheme.colors.primary else Color(0xFFD97706),
+                                tint = if ((settings.themeMode != com.drfxai.maximusvpn.data.model.ThemeMode.LIGHT)) AppTheme.colors.primary else Color(0xFFD97706),
                                 modifier = Modifier.size(20.dp)
                             )
                         }
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
                             Text(
-                                text = if (settings.darkTheme) "Dark Theme Active" else "Light Theme Active",
+                                text = if ((settings.themeMode != com.drfxai.maximusvpn.data.model.ThemeMode.LIGHT)) "Dark Theme Active" else "Light Theme Active",
                                 color = AppTheme.colors.textPrimary,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold
@@ -166,9 +167,9 @@ fun SettingsScreen(
                     }
 
                     ThemeToggleSwitch(
-                        isDark = settings.darkTheme,
+                        isDark = (settings.themeMode != com.drfxai.maximusvpn.data.model.ThemeMode.LIGHT),
                         onThemeChange = { isDark ->
-                            viewModel.setDarkTheme(isDark)
+                            viewModel.setThemeMode(if (isDark) com.drfxai.maximusvpn.data.model.ThemeMode.DARK else com.drfxai.maximusvpn.data.model.ThemeMode.LIGHT)
                         }
                     )
                 }
@@ -300,8 +301,8 @@ fun SettingsScreen(
                     icon = Icons.Default.Refresh,
                     title = "Auto-Reconnect on Network Switch",
                     subtitle = "Automatically re-establishes tunnel on WiFi/Cellular transition",
-                    checked = settings.autoReconnect,
-                    onCheckedChange = { viewModel.setAutoReconnect(it) }
+                    checked = settings.reconnectPolicy != com.drfxai.maximusvpn.data.model.ReconnectPolicy.OFF,
+                    onCheckedChange = { viewModel.setReconnectPolicy(if (it) ReconnectPolicy.BALANCED else ReconnectPolicy.OFF) }
                 )
             }
         }

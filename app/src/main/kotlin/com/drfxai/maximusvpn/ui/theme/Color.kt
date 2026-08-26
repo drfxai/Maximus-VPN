@@ -157,3 +157,19 @@ val StatusConnected = StatusConnectedGreen
 val StatusConnecting = StatusWarningAmber
 val StatusDisconnected = Color(0xFF808080)
 val StatusFailed = StatusErrorRed
+
+/** Pure-black AMOLED palette — identical to dark except true black surfaces. */
+val AmoledAppColors: AppColors by lazy {
+    DarkAppColors.copy(
+        background = Color(0xFF000000),
+        surface = Color(0xFF000000),
+        surfaceCard = Color(0xFF0A0A0C),
+        surfaceCardHighlight = Color(0xFF121216),
+        surfaceInput = Color(0xFF08080A),
+        surfaceElevated = Color(0xFF101014),
+        surfacePill = Color(0xFF16161C),
+        borderSubtle = Color(0xFF1B1B22),
+        consoleBackground = Color(0xFF000000),
+        toggleTrack = Color(0xFF111118)
+    )
+}

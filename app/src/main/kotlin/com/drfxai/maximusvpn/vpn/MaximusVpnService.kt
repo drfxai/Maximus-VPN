@@ -22,10 +22,14 @@ import com.drfxai.maximusvpn.data.database.AppDatabase
 import com.drfxai.maximusvpn.data.model.AppSettings
 import com.drfxai.maximusvpn.data.model.ConnectionState
 import com.drfxai.maximusvpn.data.model.ConnectionStatus
+import com.drfxai.maximusvpn.data.model.ReconnectPolicy
 import com.drfxai.maximusvpn.data.model.RoutingMode
+import com.drfxai.maximusvpn.data.model.SplitTunnelMode
 import com.drfxai.maximusvpn.data.model.VlessProfile
+import com.drfxai.maximusvpn.data.model.VpnProtocol
 import com.drfxai.maximusvpn.data.repository.ServerRepository
 import com.drfxai.maximusvpn.data.repository.SettingsRepository
+import com.drfxai.maximusvpn.data.repository.SplitTunnelRepository
 import com.drfxai.maximusvpn.xray.XrayConfigBuilder
 import com.drfxai.maximusvpn.xray.XrayCoreEngine
 import com.drfxai.maximusvpn.xray.XrayLogManager
@@ -71,6 +75,7 @@ class MaximusVpnService : VpnService() {
 
     private lateinit var serverRepository: ServerRepository
     private lateinit var settingsRepository: SettingsRepository
+    private lateinit var splitTunnelRepository: SplitTunnelRepository
     private var activeProfile: VlessProfile? = null
     private var connectivityManager: ConnectivityManager? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
@@ -80,6 +85,7 @@ class MaximusVpnService : VpnService() {
         val db = AppDatabase.getInstance(applicationContext)
         serverRepository = ServerRepository(db.serverProfileDao())
         settingsRepository = SettingsRepository(applicationContext)
+        splitTunnelRepository = SplitTunnelRepository(applicationContext)
         createNotificationChannel()
         registerNetworkCallback()
     }
@@ -142,9 +148,22 @@ class MaximusVpnService : VpnService() {
             ))
             showForegroundNotification("Preparing connection to ${profile.name}...")
 
-            XrayLogManager.appendLog("Starting VPN connection procedure for server: ${profile.name} (${profile.address}:${profile.port})", "VPN")
+            XrayLogManager.appendLog(
+                "Starting VPN connection procedure for server: ${profile.name} " +
+                    "(${profile.protocolEnum.label} ${profile.address}:${profile.port})", "VPN"
+            )
 
             val settings = settingsRepository.getSettings()
+
+            // Hysteria2 has no Xray-core outbound — refuse cleanly instead of building
+            // a config that would black-hole all traffic (fail-closed).
+            if (profile.protocolEnum == VpnProtocol.HYSTERIA2) {
+                failConnection(
+                    "Hysteria2 profiles can be imported and stored, but connecting is not " +
+                        "supported yet (Xray-core has no Hysteria2 outbound). Select a VLESS/VMess/Trojan/SS server."
+                )
+                return@withContext
+            }
 
             // 1. Configure and establish the Android VpnService TUN interface FIRST.
             //    Fail-closed ordering: if anything later fails, we tear this down immediately,
@@ -166,12 +185,7 @@ class MaximusVpnService : VpnService() {
                 }
             }
 
-            // Prevent routing loops: exclude our own process from the TUN
-            try {
-                builder.addDisallowedApplication(packageName)
-            } catch (e: Exception) {
-                XrayLogManager.appendLog("Disallow package notice: ${e.message}", "TUNNEL")
-            }
+            applySplitTunneling(builder, settings)
 
             // Kill switch: setBlocking(true) is API 29+; on API 24–28 it is NOT available —
             // the Settings screen documents that Always-on VPN (system) covers those.
@@ -238,6 +252,50 @@ class MaximusVpnService : VpnService() {
         } catch (e: Exception) {
             XrayLogManager.appendLog("Fatal error establishing VPN connection: ${e.message}", "ERROR")
             failConnection(e.localizedMessage ?: "Unknown connection failure")
+        }
+    }
+
+    /**
+     * Applies per-app split tunneling from user settings.
+     *
+     * Android's VpnService allows EITHER allowed- OR disallowed-apps per interface,
+     * never both. Our own package must ALWAYS be excluded from the TUN (routing-loop
+     * protection), which is only possible in EXCLUDE mode — in ALLOW_ONLY mode the OS
+     * implicitly excludes nothing else, so we additionally protect Xray's sockets via
+     * VpnService.protect() at the engine layer instead.
+     */
+    private fun applySplitTunneling(builder: Builder, settings: AppSettings) {
+        // Our own process must never loop back into the TUN.
+        try { builder.addDisallowedApplication(packageName) } catch (_: Exception) {}
+
+        when (settings.splitTunnelMode) {
+            SplitTunnelMode.DISABLED -> Unit
+
+            SplitTunnelMode.EXCLUDE -> {
+                var applied = 0
+                for (pkg in splitTunnelRepository.getExcludeList()) {
+                    try {
+                        builder.addDisallowedApplication(pkg)
+                        applied++
+                    } catch (e: Exception) {
+                        XrayLogManager.appendLog("Split-tunnel skip '$pkg': ${e.message}", "TUNNEL")
+                    }
+                }
+                XrayLogManager.appendLog("Split tunnel EXCLUDE: $applied apps bypass the VPN.", "TUNNEL")
+            }
+
+            SplitTunnelMode.ALLOW_ONLY -> {
+                var applied = 0
+                for (pkg in splitTunnelRepository.getAllowList()) {
+                    try {
+                        builder.addAllowedApplication(pkg)
+                        applied++
+                    } catch (e: Exception) {
+                        XrayLogManager.appendLog("Split-tunnel skip '$pkg': ${e.message}", "TUNNEL")
+                    }
+                }
+                XrayLogManager.appendLog("Split tunnel ALLOW_ONLY: $applied apps use the VPN.", "TUNNEL")
+            }
         }
     }
 
@@ -325,6 +383,14 @@ class MaximusVpnService : VpnService() {
         xrayCore.stop()
     }
 
+    /**
+     * Network monitoring + auto-reconnect.
+     *
+     * BALANCED: reconnect only when the tunnel's network was lost/replaced
+     *   (classic Wi-Fi ↔ mobile handover recovery).
+     * AGGRESSIVE: also proactively re-establishes on every new network appearing,
+     *   so the tunnel rebinds to a better route as soon as one exists.
+     */
     private fun registerNetworkCallback() {
         connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
         val request = NetworkRequest.Builder()
@@ -334,17 +400,20 @@ class MaximusVpnService : VpnService() {
         networkCallback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 XrayLogManager.appendLog("Underlying network available.", "NETWORK")
-                // Real reconnect: when enabled and the tunnel dropped with the network,
-                // bring it back up against the remembered profile.
                 serviceScope.launch {
                     val settings = settingsRepository.getSettings()
-                    if (settings.autoReconnect &&
-                        _vpnState.value.status == ConnectionStatus.RECONNECTING
-                    ) {
+                    val state = _vpnState.value.status
+                    val wantsReconnect = when (settings.reconnectPolicy) {
+                        ReconnectPolicy.OFF -> false
+                        ReconnectPolicy.BALANCED ->
+                            state == ConnectionStatus.RECONNECTING
+                        ReconnectPolicy.AGGRESSIVE ->
+                            state == ConnectionStatus.RECONNECTING ||
+                                state == ConnectionStatus.CONNECTED // re-bind opportunistically on any new network
+                    }
+                    if (wantsReconnect) {
                         val target = _vpnState.value.activeProfile
-                            ?: settings.selectedProfileId?.let {
-                                serverRepository.getProfileById(it)
-                            }
+                            ?: settings.selectedProfileId?.let { serverRepository.getProfileById(it) }
                         if (target != null) connect(target)
                     }
                 }
@@ -352,10 +421,17 @@ class MaximusVpnService : VpnService() {
 
             override fun onLost(network: Network) {
                 XrayLogManager.appendLog("Underlying network connection lost.", "NETWORK")
-                val settings = settingsRepository.getSettings()
-                if (_vpnState.value.isConnected && settings.autoReconnect) {
-                    XrayLogManager.appendLog("Auto-reconnect is enabled. Waiting for network recovery...", "VPN")
-                    updateState(_vpnState.value.copy(status = ConnectionStatus.RECONNECTING))
+                serviceScope.launch {
+                    val settings = settingsRepository.getSettings()
+                    if (_vpnState.value.isConnected &&
+                        settings.reconnectPolicy != ReconnectPolicy.OFF
+                    ) {
+                        XrayLogManager.appendLog("Auto-reconnect enabled. Waiting for network recovery...", "VPN")
+                        updateState(_vpnState.value.copy(status = ConnectionStatus.RECONNECTING))
+                    } else if (_vpnState.value.isConnected) {
+                        // Policy OFF: tear down immediately rather than leave a dead tunnel up.
+                        disconnect()
+                    }
                 }
             }
         }
@@ -385,9 +461,7 @@ class MaximusVpnService : VpnService() {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         val openAppPendingIntent = PendingIntent.getActivity(
-            this,
-            0,
-            openAppIntent,
+            this, 0, openAppIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
@@ -395,9 +469,7 @@ class MaximusVpnService : VpnService() {
             action = ACTION_DISCONNECT
         }
         val disconnectPendingIntent = PendingIntent.getService(
-            this,
-            1,
-            disconnectIntent,
+            this, 1, disconnectIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
@@ -405,13 +477,11 @@ class MaximusVpnService : VpnService() {
             action = ACTION_RECONNECT
         }
         val reconnectPendingIntent = PendingIntent.getService(
-            this,
-            2,
-            reconnectIntent,
+            this, 2, reconnectIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        val profileName = activeProfile?.name ?: "VLESS Tunnel"
+        val profileName = activeProfile?.let { "${it.protocolEnum.label} · ${it.name}" } ?: "VPN Tunnel"
 
         val notification: Notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
